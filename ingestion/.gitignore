@@ -1,0 +1,5 @@
+# Runtime state: Telegram session, browser profiles, HTML snapshots, logs, locks
+state/
+__pycache__/
+*.pyc
+.env

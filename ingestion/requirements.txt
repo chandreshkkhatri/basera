@@ -1,0 +1,15 @@
+# Core (DB + config + models) — needed by every command
+sqlalchemy>=2.0
+psycopg[binary]>=3.1
+pydantic>=2.0
+pydantic-settings>=2.0
+
+# LLM + geocoding
+openai>=1.0
+google-genai>=1.0
+googlemaps>=4.10.0
+
+# Scrapers
+telethon>=1.28.5
+playwright>=1.40.0
+requests>=2.31.0
