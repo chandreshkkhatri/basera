@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Secrets & credentials
+.env
+*.session
+*.session-journal
+
+# Scraped output & browser data
+results/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
