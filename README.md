@@ -59,6 +59,9 @@ web app's `/admin` panel (gated by `ADMIN_TOKEN`). Both write the same DB.
 The local Postgres is published on host port **5433** (to avoid clashing with a
 system Postgres on 5432).
 
+For production setup on Neon + Vercel, GitHub Actions migration secrets, and
+the ingestion cron/container runbook, see [DEPLOY.md](DEPLOY.md).
+
 ## Repository layout
 
 | Path | What |
