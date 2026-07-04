@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "./schema";
+import { databaseSslConfig } from "./ssl";
 
 const connectionString =
   process.env.DATABASE_URL ?? "postgres://basera:basera@localhost:5433/basera";
@@ -12,7 +13,7 @@ const globalForDb = globalThis as unknown as {
 
 const pool =
   globalForDb.__baseraPool ??
-  new Pool({ connectionString, max: 10 });
+  new Pool({ connectionString, max: 10, ssl: databaseSslConfig(connectionString) });
 
 if (process.env.NODE_ENV !== "production") {
   globalForDb.__baseraPool = pool;
