@@ -66,6 +66,68 @@ system Postgres on 5432).
 For production setup on Neon + Vercel, GitHub Actions migration secrets, and
 the ingestion cron/container runbook, see [DEPLOY.md](DEPLOY.md).
 
+## Common Ingestion Workflows
+
+### Manage Facebook groups
+
+The ingestion engine scrapes every **enabled** group in the shared DB. You can
+manage that registry either in the web app's `/admin` page or from the CLI:
+
+```bash
+cd /home/chandresh/code/basera
+source .venv/bin/activate
+
+python -m ingestion groups list
+python -m ingestion groups add https://www.facebook.com/groups/xxxx --city Pune
+python -m ingestion groups remove https://www.facebook.com/groups/xxxx
+```
+
+Use `groups remove` to stop scraping deleted, renamed, or invalid groups.
+
+### Retry failed AI processing
+
+Raw capture and AI analysis are separate stages. A scrape stores raw posts in
+`raw_posts`; the AI/geocoding path turns successful ones into `listings`.
+
+```bash
+python -m ingestion run --posts 50
+python -m ingestion analyze
+```
+
+Retryable AI-processing failures are **not** dropped immediately. They remain
+pending in `raw_posts` and are retried later by `analyze` or by a later scrape
+that sees the same post again. The retry budget is configurable in `.env`:
+
+```ini
+PROCESSING_MAX_ATTEMPTS=3
+PROCESSING_RETRY_BACKOFF_S=300
+```
+
+### Run continuously for a fixed window
+
+For local testing, the easiest way to run repeated scrape/analyze cycles for a
+bounded period is the helper script below:
+
+```bash
+cd /home/chandresh/code/basera
+source .venv/bin/activate
+python -m ingestion.scripts.run_window --hours 12 --interval-minutes 30 --posts 50
+```
+
+That runs one scrape cycle every 30 minutes for 12 hours, then runs
+`python -m ingestion analyze` after each cycle so pending retryable AI work gets
+another pass before the next cycle.
+
+To keep it running after you close the terminal:
+
+```bash
+nohup python -m ingestion.scripts.run_window --hours 12 --interval-minutes 30 --posts 50 \
+  > ingestion/state/logs/window-$(date +%Y%m%d-%H%M%S).log 2>&1 &
+```
+
+If you want a permanent schedule instead of a bounded 12-hour window, use cron
+or systemd as described in [DEPLOY.md](DEPLOY.md).
+
 ## Using Processed Data
 
 Processed listings are written into Postgres and consumed directly by the web
@@ -79,6 +141,23 @@ app:
   health.
 - `/api/listings` exposes the same filtered listing data as JSON for other
   clients.
+
+Useful ways to inspect or consume that data locally:
+
+```bash
+# JSON feed for external clients or debugging
+curl "http://localhost:3000/api/listings?city=pune&view=full"
+
+# map payload only
+curl "http://localhost:3000/api/listings?city=pune&view=map"
+```
+
+Typical validation path after a real ingestion run:
+
+1. Open `/status` to confirm recent scrape runs and counts.
+2. Open `/` for the city feed.
+3. Open `/map` to verify coordinates rendered for geocoded listings.
+4. Open `/listings/<id>` to inspect the extracted fields and original post text.
 
 For a local 12-hour scrape window without setting up cron, run:
 
