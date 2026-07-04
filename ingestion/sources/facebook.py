@@ -317,21 +317,23 @@ class FacebookSource:
         s = self.settings
         self.playwright = sync_playwright().start()
         user_data = s.chrome_user_data_dir or str(s.state_path / "profiles" / "facebook")
+        launch_options = {
+            "headless": s.headless,
+            "ignore_default_args": ["--no-sandbox"],
+        }
+        if s.browser_channel:
+            launch_options["channel"] = s.browser_channel
         try:
             self.context = self.playwright.chromium.launch_persistent_context(
                 user_data_dir=user_data,
-                headless=s.headless,
-                channel="chrome",
                 args=["--disable-blink-features=AutomationControlled"],
-                ignore_default_args=["--no-sandbox"],
+                **launch_options,
             )
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
         except Exception as e:  # noqa: BLE001
-            log.warning("Profile launch failed (%s); plain Chrome", e)
-            browser = self.playwright.chromium.launch(
-                headless=s.headless, channel="chrome",
-                ignore_default_args=["--no-sandbox"],
-            )
+            channel = s.browser_channel or "bundled Chromium"
+            log.warning("Profile launch failed (%s); plain %s", e, channel)
+            browser = self.playwright.chromium.launch(**launch_options)
             self.context = browser.new_context()
             self.page = self.context.new_page()
 

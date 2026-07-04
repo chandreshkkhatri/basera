@@ -55,6 +55,7 @@ class Settings(BaseSettings):
 
     # --- Browser (WhatsApp + Facebook) ----------------------------------
     chrome_user_data_dir: str | None = None
+    browser_channel: str | None = "chrome"
     headless: bool = False
 
     # --- State / filesystem ---------------------------------------------

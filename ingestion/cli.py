@@ -1,9 +1,9 @@
 """Command-line interface for the ingestion engine.
 
-    python -m ingestion run telegram|whatsapp|facebook [--limit N] [--scrape-only] ...
-    python -m ingestion analyze [--source X] [--workers N]
+    python -m ingestion run [--group URL] [--posts N] [--scrape-only] [--api]
+    python -m ingestion analyze [--workers N]
     python -m ingestion backfill [--results-dir scraper/results]
-    python -m ingestion groups list|add <url>
+    python -m ingestion groups list | add <url> --city <name>
     python -m ingestion check
 """
 
