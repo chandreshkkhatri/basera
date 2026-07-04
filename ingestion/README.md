@@ -71,6 +71,8 @@ python -m ingestion groups list
 python -m ingestion run                       # all enabled groups
 python -m ingestion run --group <url> --posts 50 [--scrape-only] [--api]
 python -m ingestion analyze [--workers N]     # LLM-analyze scrape-only captures
+python -m ingestion.scripts.run_window --hours 12 --interval-minutes 30 --posts 50
+                                             # bounded continuous local run
 python -m ingestion backfill [--results-dir scraper/results]
 python -m ingestion check
 ```

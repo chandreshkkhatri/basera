@@ -52,6 +52,9 @@ cp .env.example .env     # fill in credentials
 python -m ingestion check
 python -m ingestion groups add https://www.facebook.com/groups/xxxx --city Pune
 python -m ingestion run --posts 50   # scrapes every enabled group
+python -m ingestion analyze          # retries pending AI-processing work
+python -m ingestion.scripts.run_window --hours 12 --interval-minutes 30 --posts 50
+                                    # bounded continuous run for local testing
 ```
 
 Register cities and Facebook groups either with `ingestion groups add` or in the
@@ -62,6 +65,31 @@ system Postgres on 5432).
 
 For production setup on Neon + Vercel, GitHub Actions migration secrets, and
 the ingestion cron/container runbook, see [DEPLOY.md](DEPLOY.md).
+
+## Using Processed Data
+
+Processed listings are written into Postgres and consumed directly by the web
+app:
+
+- `/` reads the `listings` table for the city-scoped feed.
+- `/map` reads the same listings with coordinates.
+- `/listings/[id]` shows full extracted details, original text, and the source
+  link.
+- `/status` reads `scrape_runs` plus listing counts to show recent ingestion
+  health.
+- `/api/listings` exposes the same filtered listing data as JSON for other
+  clients.
+
+For a local 12-hour scrape window without setting up cron, run:
+
+```bash
+cd /home/chandresh/code/basera
+source .venv/bin/activate
+python -m ingestion.scripts.run_window --hours 12 --interval-minutes 30 --posts 50
+```
+
+That command runs a scrape cycle every 30 minutes, then runs `analyze` so any
+pending retryable AI-processing work gets another pass before the next cycle.
 
 ## Repository layout
 
