@@ -1,8 +1,8 @@
 # Basera Web
 
-Next.js (App Router, TypeScript) app for browsing aggregated rental listings and
-contacting posters on their source platform. Reads the Postgres database written
-by the [ingestion engine](../ingestion).
+Next.js (App Router, TypeScript) app for browsing rental listings aggregated
+from Facebook groups and deep-linking out to contact the poster on Facebook.
+Reads the Postgres database written by the [ingestion engine](../ingestion).
 
 ## Stack
 
@@ -23,11 +23,15 @@ view is a shareable link.
 ```bash
 docker compose up -d postgres        # from repo root
 npm install
-cp .env.example .env.local
+cp .env.example .env.local           # set ADMIN_TOKEN to use /admin locally
 npm run db:migrate
-npm run db:seed                      # ~150 fake listings for local dev
+npm run db:seed                      # ~180 demo listings across cities
 npm run dev
 ```
+
+`drizzle-kit` and the seed load `.env.local` automatically, so no manual
+`DATABASE_URL` export is needed. For production (Vercel + hosted Postgres,
+migrations in CI), see [DEPLOY.md](../DEPLOY.md).
 
 ## Cities & sourcing
 

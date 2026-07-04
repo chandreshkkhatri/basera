@@ -41,7 +41,8 @@ cd web
 npm install
 cp .env.example .env.local
 npm run db:migrate
-npm run db:seed          # optional: ~150 fake listings for local dev
+npm run db:seed          # optional: ~180 demo listings across Pune, Mumbai,
+                         # and a disabled Bengaluru (to exercise the admin toggle)
 npm run dev              # http://localhost:3000
 
 # 3. Ingestion engine (in another shell, from repo root)

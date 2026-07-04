@@ -43,7 +43,9 @@ Raw capture and LLM analysis are separable: `run --scrape-only` just fills
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r ingestion/requirements.txt
-playwright install chromium        # for Facebook browser scraping
+# Browser scraping uses Google Chrome by default (BROWSER_CHANNEL=chrome).
+# Either have Chrome installed, or:
+playwright install chrome          # or: set BROWSER_CHANNEL= and `playwright install chromium`
 cp .env.example .env               # fill in credentials (see below)
 ```
 
@@ -75,6 +77,7 @@ Interactive Facebook login happens on first run; the session persists under
 ## Environment (.env)
 
 ```ini
+# Local docker Postgres on 5433. For hosted Postgres, add ?sslmode=require.
 DATABASE_URL=postgresql+psycopg://basera:basera@localhost:5433/basera
 
 MODEL_PROVIDER=openai            # or gemini
@@ -84,7 +87,18 @@ GOOGLE_MAPS_API_KEY=...
 # Facebook (groups are registered in the DB, not here)
 FB_ACCESS_TOKEN=...              # optional, enables --api mode
 FB_GROUP_ID=...                  # optional, for --api mode
+
+# Browser (optional)
+# BROWSER_CHANNEL=chrome         # set empty to use Playwright's bundled Chromium
+# HEADLESS=false                 # true for unattended/server runs
 ```
+
+## Deployment
+
+For running the engine in a container (Playwright + Chrome) and on a cron
+schedule against a hosted database, see [DEPLOY.md](../DEPLOY.md). A
+`Dockerfile` is provided; the browser scraper still needs a one-time interactive
+Facebook login on a machine with a display before unattended runs.
 
 ## Database contract
 
