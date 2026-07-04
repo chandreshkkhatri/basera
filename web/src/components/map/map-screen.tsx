@@ -23,31 +23,35 @@ export function MapScreen({
   center: [number, number] | null;
 }) {
   const searchParams = useSearchParams();
-  const [rows, setRows] = useState<MapRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [result, setResult] = useState<{
+    qs: string;
+    rows: MapRow[];
+    total: number;
+  }>({ qs: "", rows: [], total: 0 });
 
   // The searchParams string is the fetch key: any filter change refetches.
   const qs = searchParams.toString();
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     const params = new URLSearchParams(qs);
     params.set("view", "map");
     fetch(`/api/listings?${params.toString()}`)
       .then((r) => r.json())
       .then((data: { listings: MapRow[]; total: number }) => {
         if (cancelled) return;
-        setRows(data.listings);
-        setTotal(data.total);
-        setLoading(false);
+        setResult({ qs, rows: data.listings, total: data.total });
       })
-      .catch(() => !cancelled && setLoading(false));
+      .catch(() => {
+        if (!cancelled) setResult({ qs, rows: [], total: 0 });
+      });
     return () => {
       cancelled = true;
     };
   }, [qs]);
 
+  const loading = result.qs !== qs;
+  const rows = loading ? [] : result.rows;
+  const total = loading ? 0 : result.total;
   const capped = total > MAP_LIMIT;
 
   return (

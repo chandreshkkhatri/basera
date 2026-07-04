@@ -55,12 +55,6 @@ export function FilterBar() {
   const getList = (k: string) =>
     (searchParams.get(k) ?? "").split(",").filter(Boolean);
 
-  // Local state for debounced rent inputs.
-  const [rentMin, setRentMin] = useState(get("rentMin"));
-  const [rentMax, setRentMax] = useState(get("rentMax"));
-  useEffect(() => setRentMin(get("rentMin")), [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => setRentMax(get("rentMax")), [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const commit = useCallback(
     (mutate: (q: URLSearchParams) => void) => {
       const q = new URLSearchParams(searchParams.toString());
@@ -83,20 +77,6 @@ export function FilterBar() {
       if (cur.size) q.set(key, [...cur].join(","));
       else q.delete(key);
     });
-
-  // Debounce rent inputs into the URL.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (rentMin !== get("rentMin")) setParam("rentMin", rentMin);
-    }, 400);
-    return () => clearTimeout(t);
-  }, [rentMin]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (rentMax !== get("rentMax")) setParam("rentMax", rentMax);
-    }, 400);
-    return () => clearTimeout(t);
-  }, [rentMax]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setSort = (value: string) =>
     commit((q) => {
@@ -218,21 +198,11 @@ export function FilterBar() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          type="number"
-          inputMode="numeric"
-          placeholder="Min ₹"
-          value={rentMin}
-          onChange={(e) => setRentMin(e.target.value)}
-          className="h-8 w-[100px]"
-        />
-        <Input
-          type="number"
-          inputMode="numeric"
-          placeholder="Max ₹"
-          value={rentMax}
-          onChange={(e) => setRentMax(e.target.value)}
-          className="h-8 w-[100px]"
+        <RentInputs
+          key={`${get("rentMin")}:${get("rentMax")}`}
+          rentMinValue={get("rentMin")}
+          rentMaxValue={get("rentMax")}
+          setParam={setParam}
         />
 
         <Select value={currentSort} onValueChange={setSort}>
@@ -288,5 +258,54 @@ export function FilterBar() {
         </Button>
       </div>
     </div>
+  );
+}
+
+function RentInputs({
+  rentMinValue,
+  rentMaxValue,
+  setParam,
+}: {
+  rentMinValue: string;
+  rentMaxValue: string;
+  setParam: (key: string, value: string) => void;
+}) {
+  const [rentMin, setRentMin] = useState(rentMinValue);
+  const [rentMax, setRentMax] = useState(rentMaxValue);
+
+  // Debounce rent inputs into the URL.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (rentMin !== rentMinValue) setParam("rentMin", rentMin);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [rentMin, rentMinValue, setParam]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (rentMax !== rentMaxValue) setParam("rentMax", rentMax);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [rentMax, rentMaxValue, setParam]);
+
+  return (
+    <>
+      <Input
+        type="number"
+        inputMode="numeric"
+        placeholder="Min ₹"
+        value={rentMin}
+        onChange={(e) => setRentMin(e.target.value)}
+        className="h-8 w-[100px]"
+      />
+      <Input
+        type="number"
+        inputMode="numeric"
+        placeholder="Max ₹"
+        value={rentMax}
+        onChange={(e) => setRentMax(e.target.value)}
+        className="h-8 w-[100px]"
+      />
+    </>
   );
 }
