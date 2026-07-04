@@ -24,6 +24,9 @@ FacebookSource.iter_posts() → RawPost
 
 Raw capture and LLM analysis are separable: `run --scrape-only` just fills
 `raw_posts`; `analyze` processes unprocessed rows later (parallel workers).
+Retryable AI-processing failures stay pending in `raw_posts` and are retried by
+later `analyze` runs or when a later scrape sees the same post again. Once the
+retry budget is exhausted, the raw post is marked failed and stops retrying.
 
 ## Layout
 
@@ -61,6 +64,7 @@ python -m ingestion check          # validates settings, DB connectivity, schema
 ```bash
 # register a city+group (or do it in the web /admin panel)
 python -m ingestion groups add https://www.facebook.com/groups/xxxx --city Pune
+python -m ingestion groups remove https://www.facebook.com/groups/xxxx
 python -m ingestion groups list
 
 # scrape every enabled group (of every enabled city), or just one
@@ -91,6 +95,10 @@ FB_GROUP_ID=...                  # optional, for --api mode
 # Browser (optional)
 # BROWSER_CHANNEL=chrome         # set empty to use Playwright's bundled Chromium
 # HEADLESS=false                 # true for unattended/server runs
+
+# Retry budget for AI-processing failures (optional)
+# PROCESSING_MAX_ATTEMPTS=3
+# PROCESSING_RETRY_BACKOFF_S=300
 ```
 
 ## Deployment

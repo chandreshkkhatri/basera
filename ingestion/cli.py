@@ -3,7 +3,7 @@
     python -m ingestion run [--group URL] [--posts N] [--scrape-only] [--api]
     python -m ingestion analyze [--workers N]
     python -m ingestion backfill [--results-dir scraper/results]
-    python -m ingestion groups list | add <url> --city <name>
+    python -m ingestion groups list | add <url> --city <name> | remove <url>
     python -m ingestion check
 """
 
@@ -41,7 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--results-dir", default="scraper/results")
 
     groups = sub.add_parser("groups", help="manage the Facebook group registry")
-    groups.add_argument("action", choices=["list", "add"])
+    groups.add_argument("action", choices=["list", "add", "remove"])
     groups.add_argument("url", nargs="?")
     groups.add_argument("--city", type=str, help="city to assign the group to (add)")
     groups.add_argument("--fb-group-id", type=str, help="Graph API group id (add)")
@@ -152,6 +152,14 @@ def _cmd_groups(args, settings) -> int:
             return 1
         repo.add_group(args.url, args.city, args.fb_group_id)
         print(f"Added group to '{args.city}': {args.url}")
+    elif args.action == "remove":
+        if not args.url:
+            print("Usage: ingestion groups remove <url>")
+            return 1
+        if not repo.delete_group(args.url):
+            print(f"Group not found: {args.url}")
+            return 1
+        print(f"Removed group: {args.url}")
     return 0
 
 

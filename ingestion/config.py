@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     selector_timeout_ms: int = 15_000
     llm_retries: int = 3
     llm_backoff_base_s: float = 5.0
+    processing_max_attempts: int = 3
+    processing_retry_backoff_s: int = 300
     analyze_workers: int = 5              # facebook_bot.py:1128
 
     def require(self, source: str) -> None:

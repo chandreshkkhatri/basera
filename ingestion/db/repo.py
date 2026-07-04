@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Engine, func, inspect, select, update
+from sqlalchemy import Engine, delete, func, inspect, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from ..models import ExtractedListing, RawPost, RunStats
@@ -22,6 +22,18 @@ def slugify(name: str) -> str:
 
 def _normalize_group_url(url: Optional[str]) -> Optional[str]:
     return url.rstrip("/") if url else url
+
+
+def _parse_retry_at(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 class SchemaError(RuntimeError):
@@ -86,19 +98,115 @@ class Repo:
         if source:
             stmt = stmt.where(tables.raw_posts.c.source == source)
         with self.engine.connect() as conn:
-            return [dict(r._mapping) for r in conn.execute(stmt)]
+            rows = [dict(r) for r in conn.execute(stmt).mappings()]
 
-    def mark_processed(self, source: str, source_id: str) -> None:
-        stmt = (
-            update(tables.raw_posts)
-            .where(
-                tables.raw_posts.c.source == source,
-                tables.raw_posts.c.source_id == source_id,
-            )
-            .values(processed_at=datetime.now(timezone.utc))
-        )
+        now = datetime.now(timezone.utc)
+        ready_rows: list[dict[str, Any]] = []
+        for row in rows:
+            meta = row.get("meta") or {}
+            next_retry_at = _parse_retry_at(meta.get("next_retry_at"))
+            if next_retry_at is None or next_retry_at <= now:
+                ready_rows.append(row)
+        return ready_rows
+
+    def mark_processed(self, source: str, source_id: str, *, status: str = "processed") -> None:
         with self.engine.begin() as conn:
-            conn.execute(stmt)
+            row = conn.execute(
+                select(tables.raw_posts.c.meta).where(
+                    tables.raw_posts.c.source == source,
+                    tables.raw_posts.c.source_id == source_id,
+                )
+            ).mappings().first()
+            meta = dict(row["meta"] or {}) if row else {}
+            meta["processing_status"] = status
+            meta.pop("next_retry_at", None)
+            if status != "failed":
+                meta.pop("last_error", None)
+                meta.pop("last_error_at", None)
+            conn.execute(
+                update(tables.raw_posts)
+                .where(
+                    tables.raw_posts.c.source == source,
+                    tables.raw_posts.c.source_id == source_id,
+                )
+                .values(processed_at=datetime.now(timezone.utc), meta=meta or None)
+            )
+
+    def load_retryable_raw_post(self, source: str, source_id: str) -> Optional[RawPost]:
+        stmt = select(tables.raw_posts).where(
+            tables.raw_posts.c.source == source,
+            tables.raw_posts.c.source_id == source_id,
+            tables.raw_posts.c.processed_at.is_(None),
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).mappings().first()
+        if not row:
+            return None
+
+        meta = row["meta"] or {}
+        next_retry_at = _parse_retry_at(meta.get("next_retry_at"))
+        now = datetime.now(timezone.utc)
+        if next_retry_at is not None and next_retry_at > now:
+            return None
+
+        return RawPost(
+            source=row["source"],
+            source_id=row["source_id"],
+            text=row["text"],
+            posted_at=row["posted_at"],
+            source_group=row["source_group"],
+            source_url=row["source_url"],
+            author_name=row["author_name"],
+            author_url=row["author_url"],
+            meta=meta,
+        )
+
+    def record_processing_failure(
+        self,
+        source: str,
+        source_id: str,
+        error: str,
+        *,
+        retryable: bool,
+        max_attempts: int,
+        backoff_s: int,
+    ) -> bool:
+        now = datetime.now(timezone.utc)
+        with self.engine.begin() as conn:
+            row = conn.execute(
+                select(tables.raw_posts.c.meta).where(
+                    tables.raw_posts.c.source == source,
+                    tables.raw_posts.c.source_id == source_id,
+                )
+            ).mappings().first()
+            meta = dict(row["meta"] or {}) if row else {}
+
+            attempts = int(meta.get("analysis_attempts") or 0) + 1
+            meta["analysis_attempts"] = attempts
+            meta["last_error"] = error
+            meta["last_error_at"] = now.isoformat()
+
+            should_retry = retryable and attempts < max_attempts
+            values: dict[str, Any] = {"meta": meta}
+
+            if should_retry:
+                retry_at = now + timedelta(seconds=backoff_s * (2 ** (attempts - 1)))
+                meta["processing_status"] = "retry_scheduled"
+                meta["next_retry_at"] = retry_at.isoformat()
+            else:
+                meta["processing_status"] = "failed"
+                meta.pop("next_retry_at", None)
+                values["processed_at"] = now
+
+            conn.execute(
+                update(tables.raw_posts)
+                .where(
+                    tables.raw_posts.c.source == source,
+                    tables.raw_posts.c.source_id == source_id,
+                )
+                .values(**values)
+            )
+        return should_retry
 
     # -- city / group registry ----------------------------------------
     def _group_city_map(self) -> dict[str, tuple[int, str]]:
@@ -146,7 +254,7 @@ class Repo:
             .where(tables.groups.c.enabled.is_(True), tables.cities.c.enabled.is_(True))
         )
         with self.engine.connect() as conn:
-            return [dict(r._mapping) for r in conn.execute(stmt)]
+            return [dict(r) for r in conn.execute(stmt).mappings()]
 
     def get_or_create_city(self, name: str, enabled: bool = True) -> int:
         slug = slugify(name)
@@ -180,6 +288,18 @@ class Repo:
         with self.engine.begin() as conn:
             conn.execute(stmt)
         self._group_city_cache = None  # invalidate
+
+    def delete_group(self, url: str) -> bool:
+        stmt = (
+            delete(tables.groups)
+            .where(tables.groups.c.url == _normalize_group_url(url))
+            .returning(tables.groups.c.id)
+        )
+        with self.engine.begin() as conn:
+            deleted = conn.execute(stmt).first() is not None
+        if deleted:
+            self._group_city_cache = None
+        return deleted
 
     # -- listings ------------------------------------------------------
     def upsert_listing(

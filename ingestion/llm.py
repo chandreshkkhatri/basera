@@ -27,6 +27,10 @@ class QuotaExceededError(Exception):
     """Raised when the LLM API's rate limit / quota is fully exhausted."""
 
 
+class RetryableLLMError(Exception):
+    """Raised when LLM extraction failed in a way that should be retried later."""
+
+
 def _is_rate_limit(err: Exception) -> bool:
     s = str(err).lower()
     return (
@@ -44,6 +48,22 @@ def _retry_after_seconds(err: Exception, default: float) -> float:
     if match:
         return float(match.group(1)) + 1
     return default
+
+
+def _is_transient(err: Exception) -> bool:
+    s = str(err).lower()
+    return (
+        "timeout" in s
+        or "timed out" in s
+        or "connection reset" in s
+        or "connection aborted" in s
+        or "connection error" in s
+        or "temporarily unavailable" in s
+        or "server error" in s
+        or "internal error" in s
+        or "bad gateway" in s
+        or "service unavailable" in s
+    )
 
 
 class LLMClient:
@@ -164,22 +184,56 @@ class LLMClient:
     # -- structured extraction --------------------------------------------
     def extract_listing(self, text: str) -> ExtractedListing | None:
         """Extract structured rental fields via provider function calling."""
-        try:
-            if self.provider == "gemini":
-                raw = self._gemini_extract(text)
-            else:
-                raw = self._openai_extract(text)
-        except QuotaExceededError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            if _is_rate_limit(e):
-                raise QuotaExceededError(str(e)) from e
-            log.error("extract_listing error: %s", e)
-            return None
+        retries = self.settings.llm_retries
+        last_error: Exception | None = None
 
-        if raw is None:
-            return None
-        return ExtractedListing.model_validate(raw)
+        for attempt in range(retries):
+            try:
+                if self.provider == "gemini":
+                    raw = self._gemini_extract(text)
+                else:
+                    raw = self._openai_extract(text)
+
+                if raw is None:
+                    return None
+                return ExtractedListing.model_validate(raw)
+            except QuotaExceededError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                last_error = e
+                if _is_rate_limit(e):
+                    wait = _retry_after_seconds(e, self.settings.llm_backoff_base_s)
+                    if attempt < retries - 1:
+                        log.warning(
+                            "Rate limit hit during extraction; waiting %.0fs (attempt %d/%d)",
+                            wait,
+                            attempt + 1,
+                            retries,
+                        )
+                        time.sleep(wait)
+                        continue
+                    raise QuotaExceededError(str(e)) from e
+
+                if _is_transient(e):
+                    wait = self.settings.llm_backoff_base_s * (attempt + 1)
+                    if attempt < retries - 1:
+                        log.warning(
+                            "Transient extraction error; waiting %.0fs (attempt %d/%d): %s",
+                            wait,
+                            attempt + 1,
+                            retries,
+                            e,
+                        )
+                        time.sleep(wait)
+                        continue
+                    raise RetryableLLMError(str(e)) from e
+
+                log.error("extract_listing error: %s", e)
+                return None
+
+        if last_error is not None:
+            raise RetryableLLMError(str(last_error)) from last_error
+        return None
 
     def _openai_extract(self, text: str) -> dict | None:
         resp = self._openai.chat.completions.create(
