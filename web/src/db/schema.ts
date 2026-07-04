@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   bigserial,
   boolean,
   check,
@@ -32,6 +33,58 @@ export type FurnishingStatus = "fully furnished" | "semi furnished" | "unfurnish
 export type ListingStatus = "active" | "stale" | "hidden";
 export type RunStatus = "running" | "success" | "error" | "quota_exceeded";
 
+/**
+ * Cities are first-class: sourcing is Facebook-only, each Facebook group is
+ * assigned to a city, and listings inherit their group's city. Admins toggle
+ * `enabled` to control which cities appear in the browsing UI (disabled cities
+ * and their listings are hidden everywhere). Managed via /admin, mirrored into
+ * the Python ingestion engine.
+ */
+export const cities = pgTable(
+  "cities",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    // Optional map centering for the /map view when this city is selected.
+    centerLat: doublePrecision("center_lat"),
+    centerLng: doublePrecision("center_lng"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex("cities_slug_uq").on(t.slug)],
+);
+
+/**
+ * Facebook group registry (moved out of the old JSON file into the DB so the
+ * admin UI can manage it). Each group belongs to exactly one city; the
+ * ingestion engine scrapes every enabled group and tags its listings with the
+ * group's city.
+ */
+export const groups = pgTable(
+  "groups",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    cityId: bigint("city_id", { mode: "number" })
+      .notNull()
+      .references(() => cities.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    name: text("name"),
+    fbGroupId: text("fb_group_id"), // optional, for Graph API mode
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("groups_url_uq").on(t.url),
+    index("groups_city_idx").on(t.cityId),
+  ],
+);
+
 export const listings = pgTable(
   "listings",
   {
@@ -47,7 +100,12 @@ export const listings = pgTable(
       .notNull()
       .defaultNow(),
     location: text("location"),
+    // Denormalized city name, kept for display. `cityId` is the source of truth
+    // for filtering — set from the group's city at ingestion time.
     city: text("city"),
+    cityId: bigint("city_id", { mode: "number" }).references(() => cities.id, {
+      onDelete: "set null",
+    }),
     // rupees/month; NULL = not specified (ingestion maps 0 -> NULL).
     rent: integer("rent"),
     bhk: text("bhk"), // free text: "2 BHK", "1 RK"
@@ -69,6 +127,7 @@ export const listings = pgTable(
     uniqueIndex("listings_source_source_id_uq").on(t.source, t.sourceId),
     index("listings_posted_at_idx").on(t.postedAt.desc()),
     index("listings_city_lower_idx").on(sql`lower(${t.city})`),
+    index("listings_city_id_idx").on(t.cityId),
     index("listings_rent_idx").on(t.rent),
     index("listings_lat_lon_idx").on(t.latitude, t.longitude),
     // covers the default feed predicate + ordering
@@ -137,3 +196,7 @@ export const scrapeRuns = pgTable(
 export type Listing = typeof listings.$inferSelect;
 export type NewListing = typeof listings.$inferInsert;
 export type ScrapeRun = typeof scrapeRuns.$inferSelect;
+export type City = typeof cities.$inferSelect;
+export type NewCity = typeof cities.$inferInsert;
+export type Group = typeof groups.$inferSelect;
+export type NewGroup = typeof groups.$inferInsert;

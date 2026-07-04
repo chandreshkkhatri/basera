@@ -19,10 +19,16 @@ const SOURCE_COLOR: Record<string, string> = {
   facebook: "#4f46e5",
 };
 
-// Pune fallback center when no listings have coordinates.
+// Pune fallback center when the selected city has no coordinates set.
 const DEFAULT_CENTER: [number, number] = [18.5204, 73.8567];
 
-export default function MapViewInner({ rows }: { rows: MapRow[] }) {
+export default function MapViewInner({
+  rows,
+  fallbackCenter,
+}: {
+  rows: MapRow[];
+  fallbackCenter?: [number, number] | null;
+}) {
   const points = rows.filter(
     (r) => r.latitude != null && r.longitude != null,
   ) as (MapRow & { latitude: number; longitude: number })[];
@@ -34,7 +40,7 @@ export default function MapViewInner({ rows }: { rows: MapRow[] }) {
 
   return (
     <MapContainer
-      center={DEFAULT_CENTER}
+      center={fallbackCenter ?? DEFAULT_CENTER}
       zoom={11}
       bounds={bounds}
       scrollWheelZoom

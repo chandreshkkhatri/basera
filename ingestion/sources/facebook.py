@@ -10,7 +10,6 @@ so this source just yields RawPost objects.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -102,30 +101,6 @@ def parse_facebook_time(time_text: str) -> datetime:
             return now
     except Exception:  # noqa: BLE001
         return datetime.now()
-
-
-class GroupRegistry:
-    """Persisted list of known groups (moved to state/facebook_groups.json)."""
-
-    def __init__(self, settings: Settings):
-        self.path = settings.state_path / "facebook_groups.json"
-
-    def load(self) -> list[str]:
-        if self.path.exists():
-            try:
-                return json.loads(self.path.read_text(encoding="utf-8"))
-            except Exception as e:  # noqa: BLE001
-                log.warning("Failed to read group registry: %s", e)
-        return []
-
-    def add(self, group: str) -> list[str]:
-        groups = self.load()
-        if group not in groups:
-            groups.append(group)
-            self.path.write_text(
-                json.dumps(groups, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
-        return groups
 
 
 class GroupLock:

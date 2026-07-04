@@ -29,7 +29,6 @@ import {
   GENDERS,
   POSTED_WITHIN,
 } from "@/lib/filters";
-import { SOURCE_KEYS, sourceMeta } from "@/lib/sources";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
 
 const POSTED_LABELS: Record<string, string> = {
@@ -46,7 +45,7 @@ const SORT_LABELS: Record<string, string> = {
   distance: "Nearest to my point",
 };
 
-export function FilterBar({ cities }: { cities: string[] }) {
+export function FilterBar() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -143,22 +142,6 @@ export function FilterBar({ cities }: { cities: string[] }) {
   const secondaryFilters = (
     <div className="flex flex-col gap-4">
       <div>
-        <p className="mb-1.5 text-xs font-medium text-muted-foreground">Source</p>
-        <div className="flex flex-wrap gap-1.5">
-          {SOURCE_KEYS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => toggleInList("source", s)}
-              className={chip(getList("source").includes(s))}
-            >
-              {sourceMeta(s).label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
         <p className="mb-1.5 text-xs font-medium text-muted-foreground">BHK</p>
         <div className="flex flex-wrap gap-1.5">
           {BHK_BUCKETS.map((b) => (
@@ -235,23 +218,6 @@ export function FilterBar({ cities }: { cities: string[] }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Select
-          value={get("city") || "__all"}
-          onValueChange={(v) => setParam("city", v === "__all" ? "" : v)}
-        >
-          <SelectTrigger className="w-[150px]" size="sm">
-            <SelectValue placeholder="City" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all">All cities</SelectItem>
-            {cities.map((c) => (
-              <SelectItem key={c} value={c}>
-                {c}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
         <Input
           type="number"
           inputMode="numeric"

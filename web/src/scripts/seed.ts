@@ -1,12 +1,23 @@
 /**
- * Dev seed: ~150 realistic Pune rental listings + a handful of scrape_runs.
- * Idempotent (ON CONFLICT DO NOTHING on the unique (source, source_id)).
- * Run with `npm run db:seed`. This unblocks all web UI work before the Python
- * ingestion engine is ready to write real rows.
+ * Dev seed: cities + Facebook groups + ~180 realistic listings across cities.
+ * Sourcing is Facebook-only. Each listing belongs to a group, which belongs to
+ * a city. Bengaluru is seeded DISABLED so you can exercise the admin toggle.
+ *
+ * Idempotent: cities/groups upsert on their unique keys, listings on
+ * (source, source_id). Also reconciles any pre-existing rows (e.g. backfilled
+ * data) that have a city name but no city_id.
+ *
+ * Run with `npm run db:seed`.
  */
-import { sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { listings, scrapeRuns, type NewListing, type Source } from "@/db/schema";
+import {
+  cities,
+  groups,
+  listings,
+  scrapeRuns,
+  type NewListing,
+} from "@/db/schema";
 
 // Deterministic RNG so re-seeding produces the same data.
 function mulberry32(seed: number) {
@@ -24,112 +35,187 @@ const chance = (p: number) => rand() < p;
 const randInt = (lo: number, hi: number) =>
   lo + Math.floor(rand() * (hi - lo + 1));
 
-const LOCALITIES: { name: string; lat: number; lng: number }[] = [
-  { name: "Baner", lat: 18.5590, lng: 73.7868 },
-  { name: "Wakad", lat: 18.5983, lng: 73.7628 },
-  { name: "Hinjewadi", lat: 18.5913, lng: 73.7389 },
-  { name: "Balewadi", lat: 18.5745, lng: 73.7699 },
-  { name: "Kharadi", lat: 18.5515, lng: 73.9430 },
-  { name: "Aundh", lat: 18.5636, lng: 73.8074 },
-  { name: "Viman Nagar", lat: 18.5679, lng: 73.9143 },
-  { name: "Kothrud", lat: 18.5074, lng: 73.8077 },
-  { name: "Hadapsar", lat: 18.5089, lng: 73.9260 },
-  { name: "Magarpatta", lat: 18.5157, lng: 73.9280 },
-  { name: "Koregaon Park", lat: 18.5362, lng: 73.8939 },
-  { name: "Pimple Saudagar", lat: 18.5980, lng: 73.8073 },
-  { name: "Wagholi", lat: 18.5793, lng: 73.9819 },
-  { name: "Bavdhan", lat: 18.5089, lng: 73.7757 },
-  { name: "Katraj", lat: 18.4482, lng: 73.8654 },
+type Locality = { name: string; lat: number; lng: number };
+type CitySeed = {
+  name: string;
+  slug: string;
+  enabled: boolean;
+  order: number;
+  center: [number, number];
+  weight: number; // relative share of listings
+  localities: Locality[];
+  groups: { name: string; url: string }[];
+};
+
+const CITIES: CitySeed[] = [
+  {
+    name: "Pune",
+    slug: "pune",
+    enabled: true,
+    order: 1,
+    center: [18.5204, 73.8567],
+    weight: 6,
+    localities: [
+      { name: "Baner", lat: 18.559, lng: 73.7868 },
+      { name: "Wakad", lat: 18.5983, lng: 73.7628 },
+      { name: "Hinjewadi", lat: 18.5913, lng: 73.7389 },
+      { name: "Balewadi", lat: 18.5745, lng: 73.7699 },
+      { name: "Kharadi", lat: 18.5515, lng: 73.943 },
+      { name: "Aundh", lat: 18.5636, lng: 73.8074 },
+      { name: "Viman Nagar", lat: 18.5679, lng: 73.9143 },
+      { name: "Kothrud", lat: 18.5074, lng: 73.8077 },
+      { name: "Hadapsar", lat: 18.5089, lng: 73.926 },
+      { name: "Koregaon Park", lat: 18.5362, lng: 73.8939 },
+    ],
+    groups: [
+      {
+        name: "Flats & Flatmates in Pune (No Brokerage)",
+        url: "https://www.facebook.com/groups/puneflatsnobrokerage",
+      },
+      {
+        name: "Pune Rent House / Flat / Room",
+        url: "https://www.facebook.com/groups/punerenthouse",
+      },
+    ],
+  },
+  {
+    name: "Mumbai",
+    slug: "mumbai",
+    enabled: true,
+    order: 2,
+    center: [19.076, 72.8777],
+    weight: 3,
+    localities: [
+      { name: "Andheri", lat: 19.1197, lng: 72.8468 },
+      { name: "Bandra", lat: 19.0596, lng: 72.8295 },
+      { name: "Powai", lat: 19.1176, lng: 72.906 },
+      { name: "Goregaon", lat: 19.1663, lng: 72.8526 },
+      { name: "Malad", lat: 19.1868, lng: 72.8484 },
+      { name: "Chembur", lat: 19.0522, lng: 72.9005 },
+      { name: "Thane", lat: 19.2183, lng: 72.9781 },
+    ],
+    groups: [
+      {
+        name: "Mumbai Flats Without Brokerage",
+        url: "https://www.facebook.com/groups/mumbainobrokerage",
+      },
+      {
+        name: "Rent House Mumbai",
+        url: "https://www.facebook.com/groups/renthousemumbai",
+      },
+    ],
+  },
+  {
+    name: "Bengaluru",
+    slug: "bengaluru",
+    enabled: false,
+    order: 3,
+    center: [12.9716, 77.5946],
+    weight: 1,
+    localities: [
+      { name: "Koramangala", lat: 12.9352, lng: 77.6245 },
+      { name: "Indiranagar", lat: 12.9784, lng: 77.6408 },
+      { name: "HSR Layout", lat: 12.9116, lng: 77.6389 },
+      { name: "Whitefield", lat: 12.9698, lng: 77.7499 },
+      { name: "Marathahalli", lat: 12.9591, lng: 77.6974 },
+    ],
+    groups: [
+      {
+        name: "Bangalore Flatmates & Rentals",
+        url: "https://www.facebook.com/groups/blrflatmates",
+      },
+    ],
+  },
 ];
 
 const BHKS = ["1 RK", "1 BHK", "1 BHK", "2 BHK", "2 BHK", "2 BHK", "3 BHK", "4 BHK"];
 const GENDERS: NewListing["genderPreference"][] = [
-  "any",
-  "any",
-  "any",
-  "male",
-  "female",
-  "family",
-  "bachelor",
+  "any", "any", "any", "male", "female", "family", "bachelor",
 ];
-const FURNISHINGS: (NewListing["furnishingStatus"])[] = [
-  "fully furnished",
-  "semi furnished",
-  "unfurnished",
-  null,
+const FURNISHINGS: NewListing["furnishingStatus"][] = [
+  "fully furnished", "semi furnished", "unfurnished", null,
 ];
-const SOURCES: Source[] = ["telegram", "whatsapp", "facebook"];
-const GROUPS: Record<Source, string[]> = {
-  telegram: ["Pune Flats & Flatmates", "PG & Rentals Pune", "Pune Rentals No Broker"],
-  whatsapp: ["Baner Rentals", "Hinjewadi Housing", "IT Park Flatmates"],
-  facebook: [
-    "Flats & Flatmates in Pune (No Brokerage)",
-    "Pune Rent House / Flat / Room",
-  ],
-};
+const NAMES = ["Rahul", "Priya", "Amit", "Sneha", "Vikram", "Neha", "Karan", "Divya"];
 
-function contactFor(source: Source, i: number): { url: string; name: string } {
-  const names = ["Rahul", "Priya", "Amit", "Sneha", "Vikram", "Neha", "Karan", "Divya"];
-  const name = pick(names);
-  if (source === "telegram") {
-    return { url: `https://t.me/user_${1000 + i}`, name };
-  }
-  if (source === "whatsapp") {
-    return { url: `https://wa.me/9198${randInt(10000000, 99999999)}`, name };
-  }
-  return {
-    url: `https://www.facebook.com/groups/purental/posts/${900000000 + i}/`,
-    name,
-  };
-}
-
-function bodyText(loc: string, bhk: string, rent: number | null): string {
+function bodyText(loc: string, city: string, bhk: string, rent: number | null): string {
   const deposit = rent ? `Deposit ${rent * randInt(1, 3)}.` : "Deposit negotiable.";
   const extras = pick([
     "Semi furnished with wardrobe and modular kitchen.",
     "Fully furnished, ready to move in.",
     "Independent, ample parking, 24x7 water.",
-    "Close to IT park, walking distance to bus stop.",
+    "Close to metro, walking distance to bus stop.",
     "No brokerage. Society with gym and pool.",
   ]);
   const rentLine = rent ? `Rent ${rent}/month.` : "Rent negotiable, contact for details.";
-  return `${bhk} available for rent in ${loc}. ${rentLine} ${deposit} ${extras} Contact for viewing.`;
+  return `${bhk} available for rent in ${loc}, ${city}. ${rentLine} ${deposit} ${extras} Contact for viewing.`;
 }
 
 const NOW = Date.now();
 const DAY = 24 * 60 * 60 * 1000;
 
-async function main() {
-  const rows: NewListing[] = [];
+async function upsertCity(c: CitySeed): Promise<number> {
+  await db
+    .insert(cities)
+    .values({
+      name: c.name,
+      slug: c.slug,
+      enabled: c.enabled,
+      displayOrder: c.order,
+      centerLat: c.center[0],
+      centerLng: c.center[1],
+    })
+    .onConflictDoNothing({ target: cities.slug });
+  const [row] = await db.select().from(cities).where(eq(cities.slug, c.slug));
+  return row.id;
+}
 
-  for (let i = 0; i < 150; i++) {
-    const source = pick(SOURCES);
-    const loc = pick(LOCALITIES);
+async function main() {
+  // Cities + groups.
+  const cityIds = new Map<string, number>();
+  const groupUrlsByCity = new Map<number, string[]>();
+  for (const c of CITIES) {
+    const cityId = await upsertCity(c);
+    cityIds.set(c.slug, cityId);
+    const urls: string[] = [];
+    for (const g of c.groups) {
+      await db
+        .insert(groups)
+        .values({ cityId, url: g.url, name: g.name })
+        .onConflictDoNothing({ target: groups.url });
+      urls.push(g.url);
+    }
+    groupUrlsByCity.set(cityId, urls);
+  }
+
+  // Weighted city pool for listing distribution.
+  const cityPool: CitySeed[] = [];
+  for (const c of CITIES) for (let i = 0; i < c.weight; i++) cityPool.push(c);
+
+  const rows: NewListing[] = [];
+  for (let i = 0; i < 180; i++) {
+    const c = pick(cityPool);
+    const cityId = cityIds.get(c.slug)!;
+    const groupUrl = pick(groupUrlsByCity.get(cityId)!);
+    const loc = pick(c.localities);
     const bhk = pick(BHKS);
     const rent = chance(0.1) ? null : randInt(8, 60) * 1000;
     const hasCoords = !chance(0.15);
     const postedAt = new Date(NOW - randInt(0, 45) * DAY - randInt(0, 23) * 3600 * 1000);
-    const contact = contactFor(source, i);
 
-    // A few non-active / non-rental rows to exercise the base predicate.
     const roll = rand();
     const status: NewListing["status"] =
       roll < 0.04 ? "stale" : roll < 0.07 ? "hidden" : "active";
     const isRental = !chance(0.05);
 
     rows.push({
-      source,
-      sourceId: `seed_${source}_${i}`,
-      sourceUrl:
-        source === "facebook"
-          ? contact.url
-          : source === "telegram"
-            ? `https://t.me/c/1234567890/${100 + i}`
-            : null,
-      sourceGroup: pick(GROUPS[source]),
+      source: "facebook",
+      sourceId: `seed_${c.slug}_${i}`,
+      sourceUrl: `${groupUrl}/posts/${900000000 + i}/`,
+      sourceGroup: groupUrl,
       postedAt,
       location: loc.name,
-      city: "Pune",
+      city: c.name,
+      cityId,
       rent,
       bhk,
       genderPreference: pick(GENDERS),
@@ -137,27 +223,36 @@ async function main() {
       additionalDetails: chance(0.5) ? "Immediate possession" : null,
       latitude: hasCoords ? loc.lat + (rand() - 0.5) * 0.01 : null,
       longitude: hasCoords ? loc.lng + (rand() - 0.5) * 0.01 : null,
-      originalText: bodyText(loc.name, bhk, rent),
-      contactName: contact.name,
-      contactUrl: contact.url,
+      originalText: bodyText(loc.name, c.name, bhk, rent),
+      contactName: pick(NAMES),
+      contactUrl: `${groupUrl}/posts/${900000000 + i}/`,
       isRental,
       status,
     });
   }
-
   await db.insert(listings).values(rows).onConflictDoNothing();
 
-  const runs = [
-    { source: "telegram", target: "@pune_rentals", ok: true, seen: 120, added: 14 },
-    { source: "facebook", target: "groups/purental", ok: true, seen: 50, added: 9 },
-    { source: "whatsapp", target: "Baner Rentals", ok: true, seen: 33, added: 5 },
-    { source: "facebook", target: "groups/broken", ok: false, seen: 0, added: 0 },
+  // Reconcile pre-existing rows (e.g. backfilled data) that have a city name
+  // but no city_id, by matching the name to a seeded city.
+  for (const c of CITIES) {
+    await db
+      .update(listings)
+      .set({ cityId: cityIds.get(c.slug)! })
+      .where(and(isNull(listings.cityId), sql`lower(${listings.city}) = ${c.slug === "bengaluru" ? "bengaluru" : c.name.toLowerCase()}`));
+  }
+
+  // A few Facebook scrape_runs for the /status page.
+  const runTargets = [
+    { url: "https://www.facebook.com/groups/puneflatsnobrokerage", ok: true, seen: 50, added: 12 },
+    { url: "https://www.facebook.com/groups/punerenthouse", ok: true, seen: 44, added: 9 },
+    { url: "https://www.facebook.com/groups/mumbainobrokerage", ok: true, seen: 38, added: 7 },
+    { url: "https://www.facebook.com/groups/renthousemumbai", ok: false, seen: 0, added: 0 },
   ];
-  for (const r of runs) {
+  for (const r of runTargets) {
     const started = new Date(NOW - randInt(1, 20) * 3600 * 1000);
     await db.insert(scrapeRuns).values({
-      source: r.source,
-      target: r.target,
+      source: "facebook",
+      target: r.url,
       startedAt: started,
       finishedAt: new Date(started.getTime() + randInt(30, 300) * 1000),
       postsSeen: r.seen,
@@ -168,9 +263,7 @@ async function main() {
     });
   }
 
-  const total = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(listings);
+  const total = await db.select({ count: sql<number>`count(*)::int` }).from(listings);
   console.log(`Seed complete. listings total: ${total[0]?.count ?? 0}`);
   process.exit(0);
 }

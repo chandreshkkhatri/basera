@@ -13,10 +13,10 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Credentials each source needs before it can run. Checked by `require()`.
+# Sourcing is Facebook-only; groups are registered in the DB (via /admin or
+# `ingestion groups add`), so no per-group credential is required here.
 _SOURCE_REQUIREMENTS: dict[str, list[str]] = {
-    "telegram": ["telegram_api_id", "telegram_api_hash", "telegram_phone"],
-    "whatsapp": ["whatsapp_target_chat"],
-    "facebook": [],  # group passed via --group or facebook_target_group
+    "facebook": [],
 }
 
 

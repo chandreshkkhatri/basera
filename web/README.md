@@ -29,14 +29,35 @@ npm run db:seed                      # ~150 fake listings for local dev
 npm run dev
 ```
 
+## Cities & sourcing
+
+Sourcing is **Facebook-only**. Every Facebook group is assigned to a **city**,
+and each listing inherits its group's city. The header **city selector** scopes
+the whole app to one selected city (persisted in `localStorage`, carried in the
+URL as `?city=<slug>`). Only **enabled** cities are shown, and a disabled city's
+listings never appear anywhere — even via a direct `?city=` link, the server
+falls back to the first enabled city.
+
 ## Pages
 
-- `/` — listings feed: filter bar (city, rent, BHK, gender, furnishing, source,
-  posted-within), sort (newest / rent / distance), offset pagination.
+- `/` — listings feed for the selected city: filter bar (rent, BHK, gender,
+  furnishing, posted-within), sort (newest / rent / distance), offset pagination.
 - `/listings/[id]` — full post, all extracted fields, mini-map, and the
-  **Contact on <platform>** deep-link CTA.
-- `/map` — Leaflet markers for the filtered set, sharing the same URL filters.
-- `/status` — ingestion health: last run per source, counts, recent runs.
+  **Contact on Facebook** deep-link CTA.
+- `/map` — Leaflet markers for the selected city, sharing the same URL filters.
+- `/status` — ingestion health: last run per group, counts, recent runs.
+- `/admin` — env-gated: enable/disable cities and manage the Facebook group
+  registry (add group URL, assign to a city, toggle, delete).
+
+## Admin
+
+The `/admin` panel is gated by a shared secret in `ADMIN_TOKEN` (see
+`.env.example`). Sign in with the token to exchange it for an httpOnly cookie;
+the page and all `/api/admin/*` mutations verify it. If `ADMIN_TOKEN` is unset,
+admin access is disabled entirely. Cities and the group registry live in the DB
+(`cities`, `groups`), so the Python ingestion engine reads exactly what the
+admin configured — `ingestion run` scrapes every enabled group of every enabled
+city.
 
 ## Point of interest & distance
 
@@ -61,3 +82,7 @@ LLM-extracted enums (`gender_preference`, `furnishing_status`, `bhk`) are plain
 `text`, not DB enums: a drifted model string must never fail a Python insert.
 `src/lib/normalize.ts` guards them at render time. CHECK constraints exist only
 on the closed sets we control (`source`, `status`).
+
+`cities` and `groups` are also shared: the admin UI writes them, Python reads
+them (`ingestion/db/tables.py` mirror). A listing's `city_id` is set from its
+group at ingestion time; `city` (text) stays denormalized for display.

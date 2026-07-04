@@ -15,7 +15,13 @@ const MapViewInner = dynamic(() => import("./map-view-inner"), {
   ),
 });
 
-export function MapScreen({ cities }: { cities: string[] }) {
+export function MapScreen({
+  cityName,
+  center,
+}: {
+  cityName: string;
+  center: [number, number] | null;
+}) {
   const searchParams = useSearchParams();
   const [rows, setRows] = useState<MapRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -47,7 +53,9 @@ export function MapScreen({ cities }: { cities: string[] }) {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Map</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {cityName} on the map
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {loading
             ? "Loading map…"
@@ -57,11 +65,11 @@ export function MapScreen({ cities }: { cities: string[] }) {
       </div>
 
       <Suspense>
-        <FilterBar cities={cities} />
+        <FilterBar />
       </Suspense>
 
       <div className="h-[70vh] w-full overflow-hidden rounded-xl border">
-        <MapViewInner rows={rows} />
+        <MapViewInner rows={rows} fallbackCenter={center} />
       </div>
     </div>
   );

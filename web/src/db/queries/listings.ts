@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { listings, type Listing } from "@/db/schema";
 import { haversineKmSql } from "@/lib/distance";
@@ -24,16 +24,13 @@ const BHK_REGEX: Record<BhkBucket, string> = {
   "4+": String.raw`\y([4-9]|\d{2,})\s*BHK`,
 };
 
-function buildWhere(f: Filters): SQL {
+function buildWhere(f: Filters, cityId: number): SQL {
   const conds: (SQL | undefined)[] = [
-    // Base predicate: only live rentals in the public feed.
+    // Base predicate: only live rentals for the selected city in the feed.
+    eq(listings.cityId, cityId),
     eq(listings.isRental, true),
     eq(listings.status, "active"),
   ];
-
-  if (f.city) {
-    conds.push(sql`lower(${listings.city}) = lower(${f.city})`);
-  }
 
   // Rent filters exclude rows without a rent value only when a bound is set.
   if (f.rentMin != null) conds.push(gte(listings.rent, f.rentMin));
@@ -62,15 +59,6 @@ function buildWhere(f: Filters): SQL {
     conds.push(
       sql`${listings.furnishingStatus} in ${sql`(${sql.join(
         f.furnishing.map((v) => sql`${v}`),
-        sql`, `,
-      )})`}`,
-    );
-  }
-
-  if (f.source.length) {
-    conds.push(
-      sql`${listings.source} in ${sql`(${sql.join(
-        f.source.map((v) => sql`${v}`),
         sql`, `,
       )})`}`,
     );
@@ -113,8 +101,11 @@ export type FeedResult = {
   pageSize: number;
 };
 
-export async function getListings(f: Filters): Promise<FeedResult> {
-  const where = buildWhere(f);
+export async function getListings(
+  f: Filters,
+  cityId: number,
+): Promise<FeedResult> {
+  const where = buildWhere(f, cityId);
   const dist = distanceExpr(f);
   const offset = (f.page - 1) * PAGE_SIZE;
 
@@ -160,8 +151,9 @@ export type MapRow = Pick<
 
 export async function getMapListings(
   f: Filters,
+  cityId: number,
 ): Promise<{ rows: MapRow[]; total: number }> {
-  const where = and(buildWhere(f), sql`${listings.latitude} is not null`)!;
+  const where = and(buildWhere(f, cityId), sql`${listings.latitude} is not null`)!;
 
   const rows = await db
     .select({
@@ -195,20 +187,4 @@ export async function getListingById(id: number): Promise<Listing | null> {
     .where(eq(listings.id, id))
     .limit(1);
   return rows[0] ?? null;
-}
-
-/** Distinct non-null cities for the filter dropdown. */
-export async function getCities(): Promise<string[]> {
-  const rows = await db
-    .selectDistinct({ city: listings.city })
-    .from(listings)
-    .where(
-      and(
-        eq(listings.isRental, true),
-        eq(listings.status, "active"),
-        sql`${listings.city} is not null`,
-      ),
-    )
-    .orderBy(asc(listings.city));
-  return rows.map((r) => r.city!).filter(Boolean);
 }

@@ -24,26 +24,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="scrape a source into the database")
-    run.add_argument("source", choices=["telegram", "whatsapp", "facebook"])
-    run.add_argument("--limit", type=int, help="max messages/posts to scrape")
-    run.add_argument("--posts", type=int, help="alias for --limit (facebook)")
+    run = sub.add_parser("run", help="scrape Facebook groups into the database")
+    run.add_argument("source", nargs="?", choices=["facebook"], default="facebook")
+    run.add_argument("--limit", type=int, help="max posts per group")
+    run.add_argument("--posts", type=int, help="alias for --limit")
     run.add_argument("--scrape-only", action="store_true",
                      help="capture raw posts without LLM analysis")
-    run.add_argument("--group", type=str, help="facebook group URL/name")
-    run.add_argument("--chat", type=str, help="whatsapp/telegram target chat")
-    run.add_argument("--api", action="store_true", help="facebook Graph API mode")
+    run.add_argument("--group", type=str,
+                     help="scrape only this group URL (default: all enabled groups)")
+    run.add_argument("--api", action="store_true", help="Graph API mode")
 
     analyze = sub.add_parser("analyze", help="LLM-analyze unprocessed raw posts")
-    analyze.add_argument("--source", choices=["telegram", "whatsapp", "facebook"])
     analyze.add_argument("--workers", type=int)
 
     backfill = sub.add_parser("backfill", help="import scraper/results/*.json")
     backfill.add_argument("--results-dir", default="scraper/results")
 
-    groups = sub.add_parser("groups", help="manage the facebook group registry")
+    groups = sub.add_parser("groups", help="manage the Facebook group registry")
     groups.add_argument("action", choices=["list", "add"])
     groups.add_argument("url", nargs="?")
+    groups.add_argument("--city", type=str, help="city to assign the group to (add)")
+    groups.add_argument("--fb-group-id", type=str, help="Graph API group id (add)")
 
     sub.add_parser("check", help="validate settings, DB connectivity and schema")
     return parser
@@ -55,38 +56,40 @@ def _cmd_run(args, settings) -> int:
     from .geocode import Geocoder
     from .llm import LLMClient
     from .pipeline import Pipeline, run_source
+    from .sources.facebook import FacebookSource, GroupLock
 
-    settings.require(args.source)
+    settings.require("facebook")
     engine = get_engine(settings)
     repo = Repo(engine)
     repo.schema_check()
 
     pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo)
     limit = args.limit or args.posts
-    target = args.group or args.chat
 
-    if args.source == "telegram":
-        from .sources.telegram import TelegramSource
-        source = TelegramSource(settings)
-    elif args.source == "whatsapp":
-        from .sources.whatsapp import WhatsAppSource
-        source = WhatsAppSource(settings)
+    # Which groups to scrape: an explicit --group, else all enabled groups whose
+    # city is enabled (registered via /admin or `ingestion groups add`).
+    if args.group:
+        targets = [args.group]
     else:
-        from .sources.facebook import FacebookSource, GroupLock
+        targets = [g["url"] for g in repo.list_enabled_groups()]
+        if not targets:
+            log.warning(
+                "No enabled groups registered. Add one with "
+                "`ingestion groups add <url> --city <name>` or via /admin."
+            )
+            return 0
+        log.info("Scraping %d enabled group(s)", len(targets))
+
+    for target in targets:
         source = FacebookSource(settings, use_api=args.api)
-        group = args.group or settings.facebook_target_group
-        lock = GroupLock(settings, group or "default")
+        lock = GroupLock(settings, target)
         if not lock.acquire():
-            return 1
+            continue
         try:
             run_source(source, pipeline, repo, target=target,
                        limit=limit, scrape_only=args.scrape_only)
         finally:
             lock.release()
-        return 0
-
-    run_source(source, pipeline, repo, target=target,
-               limit=limit, scrape_only=args.scrape_only)
     return 0
 
 
@@ -98,12 +101,12 @@ def _cmd_analyze(args, settings) -> int:
     from .models import RawPost
     from .pipeline import Pipeline
 
-    settings.require(args.source or "facebook")
+    settings.require("facebook")
     engine = get_engine(settings)
     repo = Repo(engine)
     repo.schema_check()
 
-    rows = repo.unprocessed_raw_posts(args.source)
+    rows = repo.unprocessed_raw_posts("facebook")
     if not rows:
         log.info("No unprocessed raw posts.")
         return 0
@@ -131,21 +134,24 @@ def _cmd_backfill(args, settings) -> int:
 
 
 def _cmd_groups(args, settings) -> int:
-    from .sources.facebook import GroupRegistry
+    from .db.engine import get_engine
+    from .db.repo import Repo
 
-    registry = GroupRegistry(settings)
+    repo = Repo(get_engine(settings))
+    repo.schema_check()
+
     if args.action == "list":
-        groups = registry.load()
-        if not groups:
-            print("No groups registered.")
-        for g in groups:
-            print(g)
+        rows = repo.list_enabled_groups()
+        if not rows:
+            print("No enabled groups registered.")
+        for g in rows:
+            print(f"[{g['city_name']}] {g['url']}")
     elif args.action == "add":
-        if not args.url:
-            print("Usage: ingestion groups add <url>")
+        if not args.url or not args.city:
+            print("Usage: ingestion groups add <url> --city <name> [--fb-group-id <id>]")
             return 1
-        registry.add(args.url)
-        print(f"Added: {args.url}")
+        repo.add_group(args.url, args.city, args.fb_group_id)
+        print(f"Added group to '{args.city}': {args.url}")
     return 0
 
 

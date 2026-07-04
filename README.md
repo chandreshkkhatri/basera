@@ -1,9 +1,11 @@
 # Basera
 
-Aggregates house-rental postings scraped from Telegram, WhatsApp and Facebook
-groups into one searchable feed, and routes people to **contact the poster on
-the original platform**. Basera never handles the transaction — it deep-links
-out to the source post (t.me / wa.me / facebook.com).
+Aggregates house-rental postings scraped from **Facebook groups** into one
+searchable, per-city feed, and routes people to **contact the poster on
+Facebook**. Basera never handles the transaction — it deep-links out to the
+source post. Each Facebook group is assigned to a city; users browse one
+selected city at a time, and admins enable/disable cities and manage the group
+registry from a gated `/admin` panel.
 
 ## Architecture
 
@@ -17,13 +19,16 @@ out to the source post (t.me / wa.me / facebook.com).
 ```
 
 - **[ingestion/](ingestion/)** — Python data-ingestion engine. A CLI you run
-  manually or via cron; scrapes each source, extracts structured fields with an
-  LLM (OpenAI/Gemini tool-calling), geocodes, and upserts into Postgres.
+  manually or via cron; scrapes every enabled Facebook group, extracts
+  structured fields with an LLM (OpenAI/Gemini tool-calling), geocodes, tags
+  each listing with its group's city, and upserts into Postgres.
 - **[web/](web/)** — Next.js (App Router, TypeScript) full-stack app. Browses
-  and filters listings, shows them on a map, and computes distance from a
-  user-set point of interest. Owns the database schema via Drizzle migrations.
-- **Postgres** — the shared contract. The web app owns migrations; the ingestion
-  engine only inserts. See [web/README.md](web/README.md) for the rules.
+  and filters listings for a selected city, shows them on a map, computes
+  distance from a user-set point of interest, and provides a gated `/admin`
+  panel for cities and groups. Owns the database schema via Drizzle migrations.
+- **Postgres** — the shared contract. The web app owns migrations and writes the
+  `cities`/`groups` registry; the ingestion engine reads that registry and
+  inserts listings. See [web/README.md](web/README.md) for the rules.
 
 ## Quickstart
 
@@ -44,9 +49,12 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r ingestion/requirements.txt
 cp .env.example .env     # fill in credentials
 python -m ingestion check
-python -m ingestion backfill        # import any legacy scraper/results/*.json
-python -m ingestion run telegram --limit 50
+python -m ingestion groups add https://www.facebook.com/groups/xxxx --city Pune
+python -m ingestion run --posts 50   # scrapes every enabled group
 ```
+
+Register cities and Facebook groups either with `ingestion groups add` or in the
+web app's `/admin` panel (gated by `ADMIN_TOKEN`). Both write the same DB.
 
 The local Postgres is published on host port **5433** (to avoid clashing with a
 system Postgres on 5432).

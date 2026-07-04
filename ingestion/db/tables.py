@@ -23,6 +23,31 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 metadata = MetaData()
 
+cities = Table(
+    "cities",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("slug", Text, nullable=False),
+    Column("enabled", Boolean, nullable=False),
+    Column("display_order", Integer, nullable=False),
+    Column("center_lat", Float),
+    Column("center_lng", Float),
+    Column("created_at", TIMESTAMP(timezone=True)),
+)
+
+groups = Table(
+    "groups",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("city_id", BigInteger, nullable=False),
+    Column("url", Text, nullable=False),
+    Column("name", Text),
+    Column("fb_group_id", Text),
+    Column("enabled", Boolean, nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True)),
+)
+
 listings = Table(
     "listings",
     metadata,
@@ -35,6 +60,7 @@ listings = Table(
     Column("scraped_at", TIMESTAMP(timezone=True)),
     Column("location", Text),
     Column("city", Text),
+    Column("city_id", BigInteger),
     Column("rent", Integer),
     Column("bhk", Text),
     Column("gender_preference", Text, nullable=False),
@@ -81,8 +107,10 @@ scrape_runs = Table(
     Column("error", Text),
 )
 
-# Columns Python writes; schema_check asserts each exists in the live DB.
+# Columns Python writes/reads; schema_check asserts each exists in the live DB.
 EXPECTED_COLUMNS: dict[str, set[str]] = {
+    "cities": {c.name for c in cities.columns},
+    "groups": {c.name for c in groups.columns},
     "listings": {c.name for c in listings.columns},
     "raw_posts": {c.name for c in raw_posts.columns},
     "scrape_runs": {c.name for c in scrape_runs.columns},
