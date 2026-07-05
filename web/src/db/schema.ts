@@ -31,7 +31,12 @@ export type Source = "telegram" | "whatsapp" | "facebook";
 export type GenderPreference = "male" | "female" | "family" | "bachelor" | "any";
 export type FurnishingStatus = "fully furnished" | "semi furnished" | "unfurnished";
 export type ListingStatus = "active" | "stale" | "hidden";
-export type RunStatus = "running" | "success" | "error" | "quota_exceeded";
+export type RunStatus =
+  | "running"
+  | "success"
+  | "error"
+  | "quota_exceeded"
+  | "login_failed";
 
 /**
  * Cities are first-class: sourcing is Facebook-only, each Facebook group is
@@ -193,6 +198,64 @@ export const scrapeRuns = pgTable(
   (t) => [index("scrape_runs_source_started_idx").on(t.source, t.startedAt.desc())],
 );
 
+/**
+ * Alert outbox, written and read ONLY by the Python ingestion engine (web may
+ * later surface it in /admin). Alerts are always RECORDED here first, then
+ * delivered to Telegram: `delivery_status` tracks the outbox lifecycle
+ * (pending -> sending -> sent | failed), with `suppressed` for alerts recorded
+ * but intentionally not delivered (category disabled, cooldown, unconfigured).
+ * Like the LLM enums, category/severity are open sets with no DB CHECK: a new
+ * Python-side category must never fail an insert.
+ */
+export type AlertCategory =
+  | "run_failure"
+  | "login_expiry"
+  | "quota_exceeded"
+  | "stale_data"
+  | "processing_failed"
+  | "db_unavailable"
+  | "test";
+export type AlertSeverity = "info" | "warning" | "error" | "critical";
+export type AlertDeliveryStatus =
+  | "pending"
+  | "sending"
+  | "sent"
+  | "suppressed"
+  | "failed";
+
+export const alerts = pgTable(
+  "alerts",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    category: text("category").$type<AlertCategory>().notNull(),
+    severity: text("severity").$type<AlertSeverity>().notNull().default("error"),
+    source: text("source").notNull().default("ingestion"),
+    message: text("message").notNull(),
+    details: jsonb("details"),
+    runId: bigint("run_id", { mode: "number" }).references(() => scrapeRuns.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    deliveryStatus: text("delivery_status")
+      .$type<AlertDeliveryStatus>()
+      .notNull()
+      .default("pending"),
+    deliveryAttempts: integer("delivery_attempts").notNull().default(0),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    deliveryError: text("delivery_error"),
+  },
+  (t) => [
+    // cooldown probe: max(created_at) for a category
+    index("alerts_category_created_idx").on(t.category, t.createdAt.desc()),
+    // flush_pending claim scan
+    index("alerts_pending_idx").on(t.deliveryStatus, t.createdAt),
+    index("alerts_created_idx").on(t.createdAt.desc()),
+  ],
+);
+
 export type Listing = typeof listings.$inferSelect;
 export type NewListing = typeof listings.$inferInsert;
 export type ScrapeRun = typeof scrapeRuns.$inferSelect;
@@ -200,3 +263,4 @@ export type City = typeof cities.$inferSelect;
 export type NewCity = typeof cities.$inferInsert;
 export type Group = typeof groups.$inferSelect;
 export type NewGroup = typeof groups.$inferInsert;
+export type Alert = typeof alerts.$inferSelect;

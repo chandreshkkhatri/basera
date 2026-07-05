@@ -65,3 +65,25 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
     error             text
 );
 CREATE INDEX IF NOT EXISTS scrape_runs_source_started_idx ON scrape_runs (source, started_at DESC);
+
+-- Alert outbox: rows are always recorded, then delivered to Telegram.
+-- delivery_status: pending -> sending -> sent | failed, or suppressed
+-- (category disabled / cooldown / notifier unconfigured).
+CREATE TABLE IF NOT EXISTS alerts (
+    id                 bigserial PRIMARY KEY,
+    category           text NOT NULL,
+    severity           text NOT NULL DEFAULT 'error',
+    source             text NOT NULL DEFAULT 'ingestion',
+    message            text NOT NULL,
+    details            jsonb,
+    run_id             bigint REFERENCES scrape_runs(id) ON DELETE SET NULL,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    delivery_status    text NOT NULL DEFAULT 'pending',
+    delivery_attempts  integer NOT NULL DEFAULT 0,
+    last_attempt_at    timestamptz,
+    delivered_at       timestamptz,
+    delivery_error     text
+);
+CREATE INDEX IF NOT EXISTS alerts_category_created_idx ON alerts (category, created_at DESC);
+CREATE INDEX IF NOT EXISTS alerts_pending_idx ON alerts (delivery_status, created_at);
+CREATE INDEX IF NOT EXISTS alerts_created_idx ON alerts (created_at DESC);

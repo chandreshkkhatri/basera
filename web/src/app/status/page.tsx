@@ -15,6 +15,7 @@ const STATUS_COLOR: Record<string, string> = {
   running: "text-sky-600",
   error: "text-destructive",
   quota_exceeded: "text-amber-600",
+  login_failed: "text-destructive",
 };
 
 function durationLabel(run: {

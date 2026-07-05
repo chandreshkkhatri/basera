@@ -107,6 +107,24 @@ scrape_runs = Table(
     Column("error", Text),
 )
 
+alerts = Table(
+    "alerts",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("category", Text, nullable=False),
+    Column("severity", Text, nullable=False),
+    Column("source", Text, nullable=False),
+    Column("message", Text, nullable=False),
+    Column("details", JSONB),
+    Column("run_id", BigInteger),
+    Column("created_at", TIMESTAMP(timezone=True)),
+    Column("delivery_status", Text, nullable=False),
+    Column("delivery_attempts", Integer, nullable=False),
+    Column("last_attempt_at", TIMESTAMP(timezone=True)),
+    Column("delivered_at", TIMESTAMP(timezone=True)),
+    Column("delivery_error", Text),
+)
+
 # Columns Python writes/reads; schema_check asserts each exists in the live DB.
 EXPECTED_COLUMNS: dict[str, set[str]] = {
     "cities": {c.name for c in cities.columns},
@@ -114,4 +132,5 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "listings": {c.name for c in listings.columns},
     "raw_posts": {c.name for c in raw_posts.columns},
     "scrape_runs": {c.name for c in scrape_runs.columns},
+    "alerts": {c.name for c in alerts.columns},
 }
