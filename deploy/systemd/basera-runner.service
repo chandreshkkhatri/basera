@@ -1,0 +1,35 @@
+# Basera continuous ingestion runner — systemd *user* unit.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   ln -s ~/code/basera/deploy/systemd/basera-runner.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now basera-runner
+# Watch:
+#   journalctl --user -u basera-runner -f
+#
+# Notes:
+# - User units CANNOT order against system units, so there is no
+#   After=docker.service here — it would be silently ignored. The runner
+#   handles a down Postgres itself (CLI exit code 5 -> wait + re-probe).
+# - Headful Chrome needs your graphical session (DISPLAY below). If the
+#   machine should run unattended/logged-out, set HEADLESS=true in .env
+#   (log in to Facebook headfully once first) and run
+#   `loginctl enable-linger $USER` so the unit survives logout.
+
+[Unit]
+Description=Basera ingestion continuous runner (scrape + analyze + watchdog)
+
+[Service]
+Type=simple
+# .env and the relative ingestion/state dir both resolve from the repo root.
+WorkingDirectory=%h/code/basera
+ExecStart=%h/code/basera/.venv/bin/python -m ingestion.scripts.run_window --forever --interval-minutes 30 --posts 50
+Restart=always
+RestartSec=60
+Environment=DISPLAY=:0
+# Uncomment on X11 if Chrome cannot connect to the display:
+# Environment=XAUTHORITY=%h/.Xauthority
+
+[Install]
+WantedBy=default.target

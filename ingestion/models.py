@@ -137,6 +137,9 @@ class RunStats:
     extraction_failed: int = 0
     geocode_failed: int = 0
     listings_upserted: int = 0
+    # Not persisted (finish_run reads only the counters); lets the analyze
+    # path report a quota stop to the CLI so the runner can cool down.
+    quota_exceeded: bool = False
 
     def summary(self) -> str:
         return (
@@ -145,3 +148,12 @@ class RunStats:
             f"geocode_failed={self.geocode_failed} "
             f"upserted={self.listings_upserted}"
         )
+
+
+@dataclass
+class RunResult:
+    """Outcome of one run_source() call: stats + the persisted run status."""
+
+    stats: RunStats
+    status: str  # success | error | quota_exceeded | login_failed
+    error: Optional[str] = None

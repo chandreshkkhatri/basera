@@ -6,6 +6,7 @@ here as a typed field, so behaviour is tunable without touching source.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -75,6 +76,43 @@ class Settings(BaseSettings):
     processing_max_attempts: int = 3
     processing_retry_backoff_s: int = 300
     analyze_workers: int = 5              # facebook_bot.py:1128
+
+    # --- Alerting (Telegram Bot API; distinct from the Telethon scraping
+    # credentials above — those belong to a future Telegram *source*) --------
+    telegram_bot_token: str | None = None
+    telegram_alert_chat_id: str | None = None  # str: supports -100... and @channel
+    # "all" | "none" | comma-separated categories, e.g. "run_failure,stale_data"
+    alert_categories: str = "all"
+    alert_cooldown_minutes: int = 30
+    # per-category overrides: "category=minutes,category=minutes"
+    alert_cooldown_overrides: str = "stale_data=240,db_unavailable=60"
+    alert_max_delivery_attempts: int = 10
+    alert_flush_batch: int = 20
+    telegram_send_timeout_s: float = 10.0
+    alert_stale_run_hours: float = 2.0    # watchdog: no successful run in window
+    alert_stale_posts_hours: float = 12.0  # watchdog: no run with new posts in window
+
+    def enabled_alert_categories(self) -> set[str] | None:
+        """None means every category; an empty set disables delivery entirely."""
+        raw = (self.alert_categories or "").strip().lower()
+        if raw in ("", "none"):
+            return set()
+        if raw == "all":
+            return None
+        return {c.strip() for c in raw.split(",") if c.strip()}
+
+    def alert_cooldown_for(self, category: str) -> timedelta:
+        """Per-category delivery cooldown; `test` alerts are never throttled."""
+        if category == "test":
+            return timedelta(0)
+        for pair in (self.alert_cooldown_overrides or "").split(","):
+            name, _, minutes = pair.partition("=")
+            if name.strip() == category:
+                try:
+                    return timedelta(minutes=float(minutes))
+                except ValueError:
+                    break
+        return timedelta(minutes=self.alert_cooldown_minutes)
 
     def require(self, source: str) -> None:
         """Raise if credentials for `source` (and the LLM/geocoder) are missing."""

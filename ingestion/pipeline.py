@@ -7,20 +7,40 @@ import logging
 import threading
 from typing import Iterator, Optional
 
+from .alerts import Alerter
 from .db.repo import Repo
 from .geocode import Geocoder
 from .llm import LLMClient, QuotaExceededError, RetryableLLMError
-from .models import RawPost, RunStats
-from .sources.base import Source
+from .models import RawPost, RunResult, RunStats
+from .sources.base import Source, SourceLoginError
 
 log = logging.getLogger(__name__)
 
 
 class Pipeline:
-    def __init__(self, llm: LLMClient, geocoder: Geocoder, repo: Repo):
+    def __init__(
+        self,
+        llm: LLMClient,
+        geocoder: Geocoder,
+        repo: Repo,
+        alerter: Optional[Alerter] = None,
+    ):
         self.llm = llm
         self.geocoder = geocoder
         self.repo = repo
+        self.alerter = alerter
+
+    def _alert_gave_up(self, post: RawPost, reason: str) -> None:
+        """One post exhausted its AI-processing retries; cooldown collapses
+        bursts into a single delivered message (the rest are recorded)."""
+        if self.alerter is None:
+            return
+        self.alerter.emit(
+            "processing_failed",
+            f"Post {post.source_id} gave up after "
+            f"{self.llm.settings.processing_max_attempts} attempts: {reason}",
+            details={"source_id": post.source_id, "source_url": post.source_url},
+        )
 
     def process(self, post: RawPost, stats: RunStats) -> bool:
         """Classify, extract, geocode and upsert one raw post. Returns True if a
@@ -48,6 +68,7 @@ class Pipeline:
                 log.warning("Retry scheduled for %s: %s", post.source_id, e)
             else:
                 log.error("Giving up on %s after repeated LLM failures: %s", post.source_id, e)
+                self._alert_gave_up(post, str(e))
             return False
 
         if not extracted or not extracted.location:
@@ -62,6 +83,8 @@ class Pipeline:
             )
             if will_retry:
                 log.warning("Retry scheduled for incomplete extraction: %s", post.source_id)
+            else:
+                self._alert_gave_up(post, "LLM extraction returned no location")
             return False
 
         lat = lon = None
@@ -109,7 +132,15 @@ class Pipeline:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             list(ex.map(work, posts))
+        stats.quota_exceeded = quota_hit.is_set()
         return stats
+
+
+STATUS_TO_ALERT_CATEGORY = {
+    "error": "run_failure",
+    "quota_exceeded": "quota_exceeded",
+    "login_failed": "login_expiry",
+}
 
 
 def run_source(
@@ -120,12 +151,14 @@ def run_source(
     target: Optional[str],
     limit: Optional[int] = None,
     scrape_only: bool = False,
-) -> RunStats:
+    alerter: Optional[Alerter] = None,
+) -> RunResult:
     """Drive a source end-to-end and record a scrape_runs row.
 
     For each post: insert into raw_posts (dedup here). If new and not
     scrape_only, run the pipeline. The scrape_runs row is finalized in a
-    `finally` so a crash still records status.
+    `finally` so a crash still records status, and any non-success status
+    raises an alert.
     """
     stats = RunStats()
     run_target = target or getattr(source, "name", "unknown")
@@ -156,12 +189,25 @@ def run_source(
                 error = str(qe)
                 log.error("Stopping run — quota exceeded: %s", qe)
                 break
+    except SourceLoginError as e:
+        status = "login_failed"
+        error = str(e)
+        log.error("Stopping run — login required: %s", e)
     except Exception as e:  # noqa: BLE001
         status = "error"
         error = str(e)
         log.exception("Run failed: %s", e)
     finally:
-        repo.finish_run(run_id, stats, status, error)
-        log.info("Run complete [%s]: %s", status, stats.summary())
-
-    return stats
+        try:
+            repo.finish_run(run_id, stats, status, error)
+        except Exception as e:  # noqa: BLE001 — don't mask the run's own error
+            log.error("Could not record run result: %s", e)
+        if alerter is not None and status != "success":
+            alerter.emit(
+                STATUS_TO_ALERT_CATEGORY.get(status, "run_failure"),
+                f"Run {status} for {run_target}: {error}",
+                run_id=run_id,
+                details={"target": run_target, "stats": stats.summary()},
+            )
+    log.info("Run complete [%s]: %s", status, stats.summary())
+    return RunResult(stats, status, error)

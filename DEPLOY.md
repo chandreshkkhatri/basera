@@ -88,7 +88,16 @@ BROWSER_CHANNEL=
 # Optional: Graph API mode
 FB_ACCESS_TOKEN=...
 FB_GROUP_ID=...
+
+# Telegram alerting (see .env.example for setup + tuning knobs)
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_ALERT_CHAT_ID=...
 ```
+
+**Ordering:** the ingestion code hard-fails (`schema_check`) until its tables
+exist — when a release adds a migration (e.g. the `alerts` table), let the
+migration workflow run against prod **before** rebuilding/redeploying the
+ingestion image.
 
 Run a check:
 
@@ -116,6 +125,14 @@ Example cron entry for a server with Docker:
 
 ```cron
 */30 * * * * docker run --rm --env-file /opt/basera/.env -v /opt/basera/state:/app/ingestion/state basera-ingestion run --api --posts 50 >> /var/log/basera-ingestion.log 2>&1
+15 * * * * docker run --rm --env-file /opt/basera/.env -v /opt/basera/state:/app/ingestion/state basera-ingestion watchdog >> /var/log/basera-ingestion.log 2>&1
 ```
+
+The `watchdog` line raises a `stale_data` Telegram alert when runs stop
+succeeding or stop yielding posts, and retries any undelivered alerts.
+
+For a **local machine** instead of server cron, use the continuous runner +
+systemd user unit — see "Continuous runner" in
+[ingestion/README.md](ingestion/README.md).
 
 The app exposes `/status` to review recent ingestion runs and group health.

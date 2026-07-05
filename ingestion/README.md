@@ -71,14 +71,66 @@ python -m ingestion groups list
 python -m ingestion run                       # all enabled groups
 python -m ingestion run --group <url> --posts 50 [--scrape-only] [--api]
 python -m ingestion analyze [--workers N]     # LLM-analyze scrape-only captures
-python -m ingestion.scripts.run_window --hours 12 --interval-minutes 30 --posts 50
-                                             # bounded continuous local run
 python -m ingestion backfill [--results-dir scraper/results]
 python -m ingestion check
+
+# alerting
+python -m ingestion alerts test               # send a test Telegram alert
+python -m ingestion alerts flush              # deliver queued (undelivered) alerts
+python -m ingestion alerts list [--limit 20]  # recent alerts + delivery status
+python -m ingestion watchdog                  # stale-data check + outbox flush
+
+# continuous runner (see below)
+python -m ingestion.scripts.run_window --hours 12 --interval-minutes 30 --posts 50
+python -m ingestion.scripts.run_window --forever --interval-minutes 30 --posts 50
 ```
 
 Interactive Facebook login happens on first run; the session persists under
 `ingestion/state/` so subsequent cron runs are unattended.
+
+CLI exit codes (the runner reacts to these): `0` ok · `1` error · `3` LLM
+quota exceeded · `4` Facebook login required · `5` database unreachable
+(`2` is argparse's usage-error code).
+
+## Alerting
+
+Failures raise **alerts**: rows in the `alerts` table that are then delivered
+to a Telegram chat via a bot (outbox pattern — recording and delivery are
+independent, so the channel can change later). Configure `TELEGRAM_BOT_TOKEN`
+and `TELEGRAM_ALERT_CHAT_ID` (see `.env.example`), then verify with
+`python -m ingestion alerts test`.
+
+Categories: `run_failure`, `login_expiry` (expired Facebook session — runs
+record status `login_failed` instead of a phantom success), `quota_exceeded`,
+`stale_data` (watchdog: no successful run in `ALERT_STALE_RUN_HOURS` or no new
+posts in `ALERT_STALE_POSTS_HOURS`), `processing_failed` (post exhausted its
+AI retry budget), `db_unavailable` (runner only). Toggle delivery with
+`ALERT_CATEGORIES`; identical categories are throttled by
+`ALERT_COOLDOWN_MINUTES` (per-category overrides supported). Suppressed or
+failed deliveries are still recorded — `alerts list` shows them, and
+`alerts flush` (also run automatically after each command) retries anything
+still pending.
+
+## Continuous runner
+
+`run_window.py --forever` cycles scrape → analyze → watchdog on an interval,
+reacting to exit codes: waits out a down Postgres (probing with `check`),
+cools down after quota exhaustion, and backs off when Facebook needs a
+re-login. Pair it with the systemd user unit in
+[deploy/systemd/basera-runner.service](../deploy/systemd/basera-runner.service)
+for auto-restart:
+
+```bash
+mkdir -p ~/.config/systemd/user
+ln -s ~/code/basera/deploy/systemd/basera-runner.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now basera-runner
+journalctl --user -u basera-runner -f
+```
+
+Headful Chrome needs your graphical session; for unattended machines set
+`HEADLESS=true` (after logging in headfully once) and
+`loginctl enable-linger $USER`.
 
 ## Environment (.env)
 

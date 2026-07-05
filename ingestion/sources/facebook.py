@@ -23,6 +23,7 @@ from playwright.sync_api import sync_playwright
 
 from ..config import Settings
 from ..models import RawPost
+from .base import SourceLoginError
 
 log = logging.getLogger(__name__)
 
@@ -223,10 +224,15 @@ class FacebookSource:
 
         self._setup_playwright()
         try:
+            # Raise (not return) so the run is recorded as login_failed/error
+            # instead of a phantom "success" with 0 posts.
             if not self._login():
-                return
+                profile = s.chrome_user_data_dir or str(s.state_path / "profiles" / "facebook")
+                raise SourceLoginError(
+                    f"Facebook login expired or timed out (profile: {profile})"
+                )
             if not self._navigate(group):
-                return
+                raise RuntimeError(f"Facebook group page failed to load: {group}")
             self._switch_to_new_listings()
 
             seen_in_run: set[str] = set()
@@ -345,6 +351,11 @@ class FacebookSource:
             return True
         except Exception:  # noqa: BLE001
             pass
+        # Headless: nobody can complete an interactive login, so don't burn
+        # the full login_timeout_ms (5 min) per group — fail fast instead.
+        if self.settings.headless:
+            log.error("Not logged in and running headless; cannot log in interactively.")
+            return False
         log.info("Please log in to Facebook in the browser window...")
         try:
             self.page.wait_for_selector(

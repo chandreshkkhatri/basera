@@ -4,7 +4,18 @@
     python -m ingestion analyze [--workers N]
     python -m ingestion backfill [--results-dir scraper/results]
     python -m ingestion groups list | add <url> --city <name> | remove <url>
+    python -m ingestion alerts test | flush | list [--limit N]
+    python -m ingestion watchdog
     python -m ingestion check
+
+Exit codes (2 is reserved by argparse for usage errors); the continuous
+runner (scripts/run_window.py) reacts to these:
+
+    0  success
+    1  >=1 group errored / schema drift / other failure
+    3  LLM quota exceeded (run or analyze)
+    4  login required (re-login to Facebook in the browser profile)
+    5  database unreachable
 """
 
 from __future__ import annotations
@@ -46,24 +57,70 @@ def _build_parser() -> argparse.ArgumentParser:
     groups.add_argument("--city", type=str, help="city to assign the group to (add)")
     groups.add_argument("--fb-group-id", type=str, help="Graph API group id (add)")
 
+    alerts = sub.add_parser("alerts", help="test/flush/list the Telegram alert outbox")
+    alerts.add_argument("action", choices=["test", "flush", "list"])
+    alerts.add_argument("--limit", type=int, default=20, help="rows to show (list)")
+
+    sub.add_parser(
+        "watchdog",
+        help="stale-data checks + deliver queued alerts (run periodically)",
+    )
+
     sub.add_parser("check", help="validate settings, DB connectivity and schema")
     return parser
 
 
-def _cmd_run(args, settings) -> int:
+# Exit codes (see module docstring). 2 is argparse's.
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_QUOTA = 3
+EXIT_LOGIN = 4
+EXIT_DB_DOWN = 5
+
+_STATUS_EXIT = {
+    "success": EXIT_OK,
+    "error": EXIT_ERROR,
+    "quota_exceeded": EXIT_QUOTA,
+    "login_failed": EXIT_LOGIN,
+}
+
+
+def _checked_repo(settings):
+    """Engine + Repo + schema check, mapped to exit codes.
+
+    Returns (repo, exit_code); repo is None when exit_code != 0. Runs before
+    any Playwright launch so a down DB fails fast (exit 5)."""
+    from sqlalchemy.exc import OperationalError
+
     from .db.engine import get_engine
-    from .db.repo import Repo
+    from .db.repo import Repo, SchemaError
+
+    repo = Repo(get_engine(settings))
+    try:
+        repo.schema_check()
+    except OperationalError as e:
+        log.error("Database unreachable: %s", e)
+        return None, EXIT_DB_DOWN
+    except SchemaError as e:
+        log.error("%s", e)
+        return None, EXIT_ERROR
+    return repo, EXIT_OK
+
+
+def _cmd_run(args, settings) -> int:
+    from .alerts import Alerter
     from .geocode import Geocoder
     from .llm import LLMClient
     from .pipeline import Pipeline, run_source
     from .sources.facebook import FacebookSource, GroupLock
 
     settings.require("facebook")
-    engine = get_engine(settings)
-    repo = Repo(engine)
-    repo.schema_check()
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
 
-    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo)
+    alerter = Alerter(settings, repo)
+    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo, alerter)
     limit = args.limit or args.posts
 
     # Which groups to scrape: an explicit --group, else all enabled groups whose
@@ -77,39 +134,50 @@ def _cmd_run(args, settings) -> int:
                 "No enabled groups registered. Add one with "
                 "`ingestion groups add <url> --city <name>` or via /admin."
             )
-            return 0
+            return EXIT_OK
         log.info("Scraping %d enabled group(s)", len(targets))
 
+    worst_rc = EXIT_OK
     for target in targets:
         source = FacebookSource(settings, use_api=args.api)
         lock = GroupLock(settings, target)
         if not lock.acquire():
             continue
         try:
-            run_source(source, pipeline, repo, target=target,
-                       limit=limit, scrape_only=args.scrape_only)
+            result = run_source(source, pipeline, repo, target=target,
+                                limit=limit, scrape_only=args.scrape_only,
+                                alerter=alerter)
         finally:
             lock.release()
-    return 0
+        worst_rc = max(worst_rc, _STATUS_EXIT.get(result.status, EXIT_ERROR))
+        if result.status == "login_failed":
+            # Same browser profile for every group: each remaining group would
+            # just burn the login timeout again. Stop and ask for re-login.
+            log.error("Skipping remaining groups until Facebook login is restored.")
+            break
+
+    alerter.flush_pending()
+    return worst_rc
 
 
 def _cmd_analyze(args, settings) -> int:
-    from .db.engine import get_engine
-    from .db.repo import Repo
+    from .alerts import Alerter
     from .geocode import Geocoder
     from .llm import LLMClient
     from .models import RawPost
     from .pipeline import Pipeline
 
     settings.require("facebook")
-    engine = get_engine(settings)
-    repo = Repo(engine)
-    repo.schema_check()
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
 
+    alerter = Alerter(settings, repo)
     rows = repo.unprocessed_raw_posts("facebook")
     if not rows:
         log.info("No unprocessed raw posts.")
-        return 0
+        alerter.flush_pending()
+        return EXIT_OK
     posts = [
         RawPost(
             source=r["source"], source_id=r["source_id"], text=r["text"],
@@ -119,12 +187,20 @@ def _cmd_analyze(args, settings) -> int:
         )
         for r in rows
     ]
-    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo)
+    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo, alerter)
     workers = args.workers or settings.analyze_workers
     log.info("Analyzing %d raw posts with %d workers", len(posts), workers)
     stats = pipeline.process_many(posts, workers)
     log.info("Analyze complete: %s", stats.summary())
-    return 0
+    if stats.quota_exceeded:
+        alerter.emit(
+            "quota_exceeded",
+            f"Analyze stopped early — LLM quota exceeded ({stats.summary()})",
+        )
+        alerter.flush_pending()
+        return EXIT_QUOTA
+    alerter.flush_pending()
+    return EXIT_OK
 
 
 def _cmd_backfill(args, settings) -> int:
@@ -161,6 +237,91 @@ def _cmd_groups(args, settings) -> int:
             return 1
         print(f"Removed group: {args.url}")
     return 0
+
+
+def _cmd_alerts(args, settings) -> int:
+    from .alerts import Alerter
+
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
+    alerter = Alerter(settings, repo)
+
+    if args.action == "test":
+        if not alerter.configured:
+            print("Telegram not configured: set TELEGRAM_BOT_TOKEN and "
+                  "TELEGRAM_ALERT_CHAT_ID in .env")
+            return 1
+        if alerter.send_test():
+            print("Test alert delivered — check your Telegram chat.")
+            return 0
+        print("Test alert NOT delivered (recorded in the outbox; "
+              "see `ingestion alerts list` for the error).")
+        return 1
+    if args.action == "flush":
+        delivered = alerter.flush_pending()
+        print(f"Delivered {delivered} queued alert(s).")
+        return 0
+    # list
+    rows = repo.recent_alerts(args.limit)
+    if not rows:
+        print("No alerts recorded.")
+    for r in rows:
+        when = r["created_at"].strftime("%Y-%m-%d %H:%M") if r["created_at"] else "?"
+        line = (f"#{r['id']} {when} [{r['category']}/{r['severity']}] "
+                f"{r['delivery_status']}: {r['message']}")
+        if r["delivery_error"]:
+            line += f" ({r['delivery_error']})"
+        print(line)
+    return 0
+
+
+def _cmd_watchdog(settings) -> int:
+    """Stale-data checks + outbox flush. Cheap; run every cycle / via cron."""
+    from datetime import datetime, timezone
+
+    from .alerts import Alerter
+
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
+    alerter = Alerter(settings, repo)
+
+    health = repo.run_health()
+    now = datetime.now(timezone.utc)
+
+    def _age_hours(ts) -> float | None:
+        if ts is None:
+            return None
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (now - ts).total_seconds() / 3600
+
+    success_age = _age_hours(health["last_success_at"])
+    yield_age = _age_hours(health["last_yield_at"])
+
+    if success_age is None or success_age > settings.alert_stale_run_hours:
+        label = f"{success_age:.1f}h ago" if success_age is not None else "never"
+        alerter.emit(
+            "stale_data",
+            f"No successful scrape run in the last "
+            f"{settings.alert_stale_run_hours:g}h (last: {label}).",
+        )
+    elif yield_age is None or yield_age > settings.alert_stale_posts_hours:
+        label = f"{yield_age:.1f}h ago" if yield_age is not None else "never"
+        alerter.emit(
+            "stale_data",
+            f"Runs succeed but no new posts in the last "
+            f"{settings.alert_stale_posts_hours:g}h (last: {label}).",
+        )
+    else:
+        log.info(
+            "Watchdog OK: last success %.1fh ago, last new posts %.1fh ago",
+            success_age, yield_age,
+        )
+
+    alerter.flush_pending()
+    return EXIT_OK
 
 
 def _cmd_check(settings) -> int:
@@ -205,6 +366,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_backfill(args, settings)
     if args.command == "groups":
         return _cmd_groups(args, settings)
+    if args.command == "alerts":
+        return _cmd_alerts(args, settings)
+    if args.command == "watchdog":
+        return _cmd_watchdog(settings)
     if args.command == "check":
         return _cmd_check(settings)
     return 1

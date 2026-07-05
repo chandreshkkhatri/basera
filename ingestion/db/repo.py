@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Engine, delete, func, inspect, select, update
+from sqlalchemy import Engine, and_, delete, func, inspect, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from ..models import ExtractedListing, RawPost, RunStats
@@ -390,3 +390,152 @@ class Repo:
             return conn.execute(
                 select(func.count()).select_from(tables.listings)
             ).scalar_one()
+
+    # -- alerts (outbox) -------------------------------------------------
+    # Rows are always recorded; delivery_status tracks the outbox lifecycle:
+    # pending -> sending (claimed, 5-min lease) -> sent | failed, or
+    # suppressed (recorded but deliberately not delivered).
+
+    ALERT_SENDING_LEASE = timedelta(minutes=5)
+
+    def insert_alert(
+        self,
+        *,
+        category: str,
+        message: str,
+        severity: str,
+        source: str = "ingestion",
+        details: Optional[dict] = None,
+        run_id: Optional[int] = None,
+        delivery_status: str = "pending",
+    ) -> int:
+        stmt = (
+            insert(tables.alerts)
+            .values(
+                category=category,
+                severity=severity,
+                source=source,
+                message=message,
+                details=details,
+                run_id=run_id,
+                created_at=datetime.now(timezone.utc),
+                delivery_status=delivery_status,
+                delivery_attempts=0,
+            )
+            .returning(tables.alerts.c.id)
+        )
+        with self.engine.begin() as conn:
+            return conn.execute(stmt).scalar_one()
+
+    def last_alert_at(self, category: str) -> Optional[datetime]:
+        """Most recent non-suppressed alert of a category (cooldown probe).
+        Suppressed rows must not refresh the cooldown, or a persistent failure
+        would never re-alert once throttled."""
+        stmt = select(func.max(tables.alerts.c.created_at)).where(
+            tables.alerts.c.category == category,
+            tables.alerts.c.delivery_status != "suppressed",
+        )
+        with self.engine.connect() as conn:
+            return conn.execute(stmt).scalar_one_or_none()
+
+    def claim_pending_alerts(
+        self, *, batch: int, max_attempts: int
+    ) -> list[dict[str, Any]]:
+        """Atomically claim undelivered alerts for sending. Flips rows to
+        'sending' so concurrent flushers can't double-send; crashed claims are
+        reclaimed after the lease expires (worst case: one duplicate message)."""
+        now = datetime.now(timezone.utc)
+        a = tables.alerts.c
+        claimable = (
+            select(tables.alerts.c.id)
+            .where(
+                or_(
+                    a.delivery_status == "pending",
+                    and_(
+                        a.delivery_status == "sending",
+                        a.last_attempt_at < now - self.ALERT_SENDING_LEASE,
+                    ),
+                ),
+                a.delivery_attempts < max_attempts,
+            )
+            .order_by(a.created_at)
+            .limit(batch)
+            .with_for_update(skip_locked=True)
+        )
+        stmt = (
+            update(tables.alerts)
+            .where(a.id.in_(claimable))
+            .values(
+                delivery_status="sending",
+                delivery_attempts=a.delivery_attempts + 1,
+                last_attempt_at=now,
+            )
+            .returning(
+                a.id, a.category, a.severity, a.message, a.details,
+                a.created_at, a.delivery_attempts,
+            )
+        )
+        with self.engine.begin() as conn:
+            return [dict(r) for r in conn.execute(stmt).mappings()]
+
+    def mark_alert_sent(self, alert_id: int) -> None:
+        stmt = (
+            update(tables.alerts)
+            .where(tables.alerts.c.id == alert_id)
+            .values(
+                delivery_status="sent",
+                delivered_at=datetime.now(timezone.utc),
+                delivery_error=None,
+            )
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def mark_alert_delivery_failed(
+        self, alert_id: int, error: str, *, final: bool
+    ) -> None:
+        stmt = (
+            update(tables.alerts)
+            .where(tables.alerts.c.id == alert_id)
+            .values(
+                delivery_status="failed" if final else "pending",
+                delivery_error=error[:500],
+            )
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def mark_alert_suppressed(self, alert_id: int, reason: str) -> None:
+        stmt = (
+            update(tables.alerts)
+            .where(tables.alerts.c.id == alert_id)
+            .values(delivery_status="suppressed", delivery_error=reason[:500])
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def recent_alerts(self, limit: int = 20) -> list[dict[str, Any]]:
+        a = tables.alerts.c
+        stmt = (
+            select(
+                a.id, a.category, a.severity, a.message,
+                a.created_at, a.delivery_status, a.delivered_at, a.delivery_error,
+            )
+            .order_by(a.created_at.desc())
+            .limit(limit)
+        )
+        with self.engine.connect() as conn:
+            return [dict(r) for r in conn.execute(stmt).mappings()]
+
+    # -- watchdog --------------------------------------------------------
+    def run_health(self) -> dict[str, Optional[datetime]]:
+        """Freshness signals for the stale-data watchdog."""
+        r = tables.scrape_runs.c
+        with self.engine.connect() as conn:
+            last_success = conn.execute(
+                select(func.max(r.started_at)).where(r.status == "success")
+            ).scalar_one_or_none()
+            last_yield = conn.execute(
+                select(func.max(r.started_at)).where(r.posts_new > 0)
+            ).scalar_one_or_none()
+        return {"last_success_at": last_success, "last_yield_at": last_yield}
