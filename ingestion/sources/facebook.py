@@ -345,6 +345,13 @@ class FacebookSource:
 
     def _login(self) -> bool:
         self.page.goto("https://www.facebook.com")
+        # The c_user session cookie is Facebook's canonical logged-in signal
+        # and is DOM-independent: headless Chrome gets a page variant without
+        # [data-testid='home-icon'] even when the session is perfectly valid.
+        self.page.wait_for_timeout(2000)
+        if self._logged_in_cookie():
+            log.info("Already logged in to Facebook (session cookie present)")
+            return True
         try:
             self.page.wait_for_selector("[data-testid='home-icon']", timeout=10000)
             log.info("Already logged in to Facebook")
@@ -365,7 +372,20 @@ class FacebookSource:
             log.info("Logged in to Facebook")
             return True
         except Exception:  # noqa: BLE001
+            # Selector may be missing from this page variant even after a
+            # successful interactive login — trust the cookie before failing.
+            if self._logged_in_cookie():
+                log.info("Logged in to Facebook (session cookie present)")
+                return True
             log.error("Login timed out.")
+            return False
+
+    def _logged_in_cookie(self) -> bool:
+        try:
+            cookies = self.context.cookies("https://www.facebook.com")
+            return any(c["name"] == "c_user" for c in cookies)
+        except Exception as e:  # noqa: BLE001
+            log.debug("cookie check failed: %s", e)
             return False
 
     def _navigate(self, group: str) -> bool:
