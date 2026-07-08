@@ -112,3 +112,37 @@ To run the scraper continuously, set up a cron job on your deployment server:
 ```
 
 Once running, you can monitor the ingestion history and status from the `/status` page on the web app.
+
+---
+
+## Troubleshooting
+
+### Resolving `LOGIN_EXPIRY (critical)` Error
+This error occurs when the Facebook scraper session cookie (`c_user`) stored under the browser profile directory (`ingestion/state/profiles/facebook`) has expired or been invalidated by Facebook. Because production runs in `HEADLESS=true` mode, the container cannot complete an interactive login and will fail immediately.
+
+To resolve this issue:
+
+#### Method 1: Local Session Re-Authentication (Recommended)
+1. In your local development workspace, temporarily set `HEADLESS=false` in your `.env` file.
+2. Run the ingestion command manually for a single post to trigger browser login:
+   ```bash
+   python -m ingestion run --posts 1
+   ```
+3. A Chrome browser window will open. Enter your Facebook credentials and solve any 2FA prompts.
+4. Once the command completes successfully, copy the updated profile directory from your local machine to your production server:
+   * Local Path: `ingestion/state/profiles/facebook/`
+   * Server Target: `/opt/basera/state/profiles/facebook/`
+5. Restart your server's ingestion container or wait for the next cron cycle.
+
+#### Method 2: Switch to Facebook Graph API Mode
+To bypass browser session timeouts entirely, configure Facebook Graph API mode in your production server's `.env`:
+1. Generate a Facebook Graph API access token.
+2. Update `/opt/basera/.env` to configure:
+   ```ini
+   FB_ACCESS_TOKEN=your_permanent_or_long_lived_token
+   FB_GROUP_ID=target_group_numeric_id
+   ```
+3. Ensure the cron command or script execution includes the `--api` flag:
+   ```bash
+   basera-ingestion run --api --posts 50
+   ```
