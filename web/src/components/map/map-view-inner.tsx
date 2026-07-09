@@ -13,12 +13,6 @@ import type { MapRow } from "@/db/queries/listings";
 import { sourceMeta } from "@/lib/sources";
 import { formatRent } from "@/lib/format";
 
-const SOURCE_COLOR: Record<string, string> = {
-  telegram: "#0284c7",
-  whatsapp: "#059669",
-  facebook: "#4f46e5",
-};
-
 // Pune fallback center when the selected city has no coordinates set.
 const DEFAULT_CENTER: [number, number] = [18.5204, 73.8567];
 
@@ -56,8 +50,8 @@ export default function MapViewInner({
           center={[p.latitude, p.longitude]}
           radius={7}
           pathOptions={{
-            color: SOURCE_COLOR[p.source] ?? "#666",
-            fillColor: SOURCE_COLOR[p.source] ?? "#666",
+            color: sourceMeta(p.source).accent,
+            fillColor: sourceMeta(p.source).accent,
             fillOpacity: 0.7,
             weight: 1.5,
           }}
