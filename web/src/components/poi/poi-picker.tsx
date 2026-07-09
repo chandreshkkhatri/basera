@@ -15,8 +15,11 @@ import { usePoi } from "@/components/poi/poi-provider";
  * Sets the user's point of interest (e.g. their office). v1 is geocode-free:
  * paste "lat, lng". Persisted to localStorage via PoiProvider; listings can
  * then show distance chips and be sorted by distance.
+ *
+ * Pass `children` to replace the default trigger button (e.g. the bottom-nav
+ * tab on mobile); it must be a single element that can hold a ref.
  */
-export function PoiPicker() {
+export function PoiPicker({ children }: { children?: React.ReactNode }) {
   const { poi, ready, setPoi, clearPoi } = usePoi();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -45,10 +48,12 @@ export function PoiPicker() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm">
-          <MapPin className="size-3.5" />
-          {ready && poi ? poi.label : "Set your point"}
-        </Button>
+        {children ?? (
+          <Button variant="outline" size="sm">
+            <MapPin className="size-3.5" />
+            {ready && poi ? poi.label : "Set your point"}
+          </Button>
+        )}
       </PopoverTrigger>
       <PopoverContent className="w-80" align="end">
         <div className="flex flex-col gap-3">

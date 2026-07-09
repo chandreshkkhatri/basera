@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 import {
   Sheet,
   SheetContent,
@@ -21,10 +22,10 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { usePoi } from "@/components/poi/poi-provider";
-import { cn } from "@/lib/utils";
 import {
   BHK_BUCKETS,
   BHK_LABELS,
+  DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY,
   FURNISHINGS,
   GENDERS,
   POSTED_WITHIN,
@@ -111,28 +112,19 @@ export function FilterBar() {
 
   const currentSort = get("sort") || "newest";
 
-  const chip = (active: boolean) =>
-    cn(
-      "rounded-full border px-3 py-1 text-sm transition-colors",
-      active
-        ? "border-primary bg-primary text-primary-foreground"
-        : "hover:bg-muted",
-    );
-
   const secondaryFilters = (
     <div className="flex flex-col gap-4">
       <div>
         <p className="mb-1.5 text-xs font-medium text-muted-foreground">BHK</p>
         <div className="flex flex-wrap gap-1.5">
           {BHK_BUCKETS.map((b) => (
-            <button
+            <Chip
               key={b}
-              type="button"
+              active={getList("bhk").includes(b)}
               onClick={() => toggleInList("bhk", b)}
-              className={chip(getList("bhk").includes(b))}
             >
               {BHK_LABELS[b]}
-            </button>
+            </Chip>
           ))}
         </div>
       </div>
@@ -143,14 +135,13 @@ export function FilterBar() {
         </p>
         <div className="flex flex-wrap gap-1.5">
           {GENDERS.map((g) => (
-            <button
+            <Chip
               key={g}
-              type="button"
+              active={getList("gender").includes(g)}
               onClick={() => toggleInList("gender", g)}
-              className={chip(getList("gender").includes(g))}
             >
               {genderLabel(g)}
-            </button>
+            </Chip>
           ))}
         </div>
       </div>
@@ -161,14 +152,13 @@ export function FilterBar() {
         </p>
         <div className="flex flex-wrap gap-1.5">
           {FURNISHINGS.map((f) => (
-            <button
+            <Chip
               key={f}
-              type="button"
+              active={getList("furnishing").includes(f)}
               onClick={() => toggleInList("furnishing", f)}
-              className={chip(getList("furnishing").includes(f))}
             >
               {furnishingLabel(f)}
-            </button>
+            </Chip>
           ))}
         </div>
       </div>
@@ -179,16 +169,15 @@ export function FilterBar() {
         </p>
         <div className="flex flex-wrap gap-1.5">
           {POSTED_WITHIN.map((p) => (
-            <button
+            <Chip
               key={p}
-              type="button"
+              active={get("postedWithin") === p}
               onClick={() =>
                 setParam("postedWithin", get("postedWithin") === p ? "" : p)
               }
-              className={chip(get("postedWithin") === p)}
             >
               {POSTED_LABELS[p]}
-            </button>
+            </Chip>
           ))}
         </div>
       </div>
@@ -250,13 +239,22 @@ export function FilterBar() {
           </Link>
         )}
 
-        <Button asChild variant="ghost" size="sm" className="ml-auto">
+        {/* Mobile switches views via the BottomNav instead. */}
+        <Button asChild variant="ghost" size="sm" className="ml-auto hidden sm:inline-flex">
           <Link href={otherView.href} scroll={false}>
             <otherView.Icon className="size-3.5" />
             {otherView.label}
           </Link>
         </Button>
       </div>
+      {/* Mirrors the server: the age penalty applies whenever the distance
+          sort is usable (POI present). */}
+      {currentSort === "distance" && get("poiLat") && get("poiLng") && (
+        <div className="text-xs text-muted-foreground italic">
+          * Older posts rank lower — each day of age counts like an extra{" "}
+          {DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY} km of distance.
+        </div>
+      )}
     </div>
   );
 }
