@@ -84,6 +84,27 @@ def normalize_post_url(url: str) -> str:
     return url
 
 
+def _is_post_href(href: str) -> bool:
+    """A permalink-shaped href — the post's own link, not a profile/reaction."""
+    if not href:
+        return False
+    return any(p in href for p in ("/posts/", "/permalink/", "story.php", "story_fbid="))
+
+
+def reconstruct_post_url(group: Optional[str], message_id: str) -> Optional[str]:
+    """Rebuild a canonical group-post permalink from a numeric post id captured
+    in the message id, when direct URL extraction came up empty. Only works when
+    the id is real (fb_post_<n>, not a content hash) and the group is known."""
+    m = re.match(r"fb_post_(\d+)$", message_id or "")
+    if not (m and group):
+        return None
+    gm = re.search(r"facebook\.com/groups/([^/?#]+)", group)
+    slug = gm.group(1) if gm else group.strip().strip("/")
+    if not slug or "/" in slug:
+        return None
+    return f"https://www.facebook.com/groups/{slug}/posts/{m.group(1)}/"
+
+
 def parse_facebook_time(time_text: str) -> datetime:
     try:
         now = datetime.now()
@@ -294,6 +315,11 @@ class FacebookSource:
                         continue
                     seen_in_run.add(message_id)
 
+                    # Last resort: rebuild the permalink from the post id when
+                    # direct extraction failed but the id is real.
+                    if not url:
+                        url = reconstruct_post_url(group, message_id) or ""
+
                     meta = {"mode": "browser"}
                     if s.save_html:
                         html_path = html_dir / f"{message_id}.html"
@@ -421,20 +447,26 @@ class FacebookSource:
             log.debug("Could not switch feed: %s", e)
 
     def _post_url(self, post) -> str:
+        # 1. The timestamp usually links to the post permalink.
         url = ""
         try:
             time_elem = post.locator("time")
             if time_elem.count() > 0:
                 parent = time_elem.locator("xpath=./ancestor::a")
                 if parent.count() > 0:
-                    url = parent.first.get_attribute("href")
+                    url = parent.first.get_attribute("href") or ""
         except Exception as e:  # noqa: BLE001
             log.debug("time-anchor url failed: %s", e)
-        if not url:
+        # 2. Otherwise scan candidate anchors for the first permalink-shaped one
+        #    (the first match isn't always the post link, so check each).
+        if not _is_post_href(url):
             try:
-                link = post.locator(LINK_SELECTOR)
-                if link.count() > 0:
-                    url = link.first.get_attribute("href")
+                links = post.locator(LINK_SELECTOR)
+                for i in range(min(links.count(), 8)):
+                    href = links.nth(i).get_attribute("href") or ""
+                    if _is_post_href(href):
+                        url = href
+                        break
             except Exception as e:  # noqa: BLE001
                 log.debug("link url failed: %s", e)
         return normalize_post_url(url)
