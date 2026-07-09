@@ -309,6 +309,7 @@ class Repo:
         lat: Optional[float],
         lon: Optional[float],
         is_rental: bool = True,
+        is_offer: bool = True,
     ) -> None:
         """Insert or update a listing. City is derived from the group (source of
         truth); the LLM city is only a fallback name. On conflict, refresh
@@ -336,6 +337,7 @@ class Repo:
             "contact_name": post.author_name,
             "contact_url": post.author_url or post.source_url,
             "is_rental": is_rental,
+            "is_offer": is_offer,
         }
         stmt = insert(tables.listings).values(**values)
         update_cols = {
@@ -345,6 +347,26 @@ class Repo:
         }
         stmt = stmt.on_conflict_do_update(
             index_elements=["source", "source_id"], set_=update_cols
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def offer_candidates(self, limit: Optional[int] = None) -> list[tuple[int, str]]:
+        """(id, original_text) for listings currently flagged as offers — the
+        set the intent backfill re-checks."""
+        stmt = select(tables.listings.c.id, tables.listings.c.original_text).where(
+            tables.listings.c.is_offer.is_(True)
+        ).order_by(tables.listings.c.id)
+        if limit:
+            stmt = stmt.limit(limit)
+        with self.engine.connect() as conn:
+            return [(r.id, r.original_text) for r in conn.execute(stmt)]
+
+    def set_listing_offer(self, listing_id: int, is_offer: bool) -> None:
+        stmt = (
+            update(tables.listings)
+            .where(tables.listings.c.id == listing_id)
+            .values(is_offer=is_offer)
         )
         with self.engine.begin() as conn:
             conn.execute(stmt)

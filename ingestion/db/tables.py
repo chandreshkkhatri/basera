@@ -72,6 +72,8 @@ listings = Table(
     Column("contact_name", Text),
     Column("contact_url", Text),
     Column("is_rental", Boolean, nullable=False),
+    # False = poster is seeking a place, not offering one; excluded from feed.
+    Column("is_offer", Boolean, nullable=False),
     Column("status", Text, nullable=False),
 )
 

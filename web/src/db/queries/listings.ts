@@ -27,9 +27,11 @@ const BHK_REGEX: Record<BhkBucket, string> = {
 
 function buildWhere(f: Filters, cityId: number): SQL {
   const conds: (SQL | undefined)[] = [
-    // Base predicate: only live rentals for the selected city in the feed.
+    // Base predicate: only live rental OFFERS for the selected city in the
+    // feed. isOffer excludes seeker/buyer posts ("looking for a flat").
     eq(listings.cityId, cityId),
     eq(listings.isRental, true),
+    eq(listings.isOffer, true),
     eq(listings.status, "active"),
   ];
 

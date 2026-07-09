@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from typing import Literal
 
 from .config import Settings
 from .models import (
@@ -21,6 +22,34 @@ from .models import (
 )
 
 log = logging.getLogger(__name__)
+
+# Post intent: an offered rental (feed-worthy), a seeker/buyer post, or neither.
+PostCategory = Literal["offer", "seek", "not_rental"]
+
+# Keyword fallback (used only when the LLM call fails, not on quota). Ordered:
+# an explicit seek phrase wins over a generic rent keyword, since seeker posts
+# also contain "rent".
+_SEEK_KEYWORDS = (
+    "looking for", "look for a", "need a", "needed", "in search of", "iso ",
+    "searching for", "want a", "require a", "requirement", "wanted on rent",
+    "accommodation required",
+)
+_OFFER_KEYWORDS = (
+    "for rent", "available for rent", "available on rent", "room available",
+    "flat available", "renting out", "up for rent", "rent out",
+)
+_RENT_KEYWORDS = ("rent", "rental", "bhk", "flatmate", "roommate", "pg ")
+
+
+def _keyword_classify(text: str) -> PostCategory:
+    low = text.lower()
+    if any(k in low for k in _OFFER_KEYWORDS):
+        return "offer"
+    if any(k in low for k in _SEEK_KEYWORDS):
+        return "seek"
+    if any(k in low for k in _RENT_KEYWORDS):
+        return "offer"
+    return "not_rental"
 
 
 class QuotaExceededError(Exception):
@@ -151,35 +180,47 @@ class LLMClient:
         )
         return resp.text
 
-    # -- rental classification --------------------------------------------
-    def classify_rental(self, text: str) -> bool:
-        """True if the post is about renting residential property. LLM first,
-        keyword fallback on non-quota errors (ported from facebook_bot.py)."""
+    # -- post classification ----------------------------------------------
+    def classify_post(self, text: str) -> PostCategory:
+        """Classify a post into 'offer' (a residential rental being offered),
+        'seek' (someone looking FOR a place to rent), or 'not_rental'. Only
+        offers belong in the feed. LLM first, keyword fallback on non-quota
+        errors."""
         try:
             response = self.complete(
                 prompt=(
-                    "Determine if this Facebook post is about renting "
-                    "residential property. Reply YES or NO.\n"
+                    "A rental listings site shows only posts OFFERING a "
+                    "residential property to rent. Classify this Facebook "
+                    "post into one word:\n"
+                    "- OFFER: a flat/room/house is being offered for rent "
+                    "(by an owner, landlord, broker, or someone with a place "
+                    "who wants a flatmate to join THEIR home).\n"
+                    "- SEEK: the poster is looking FOR a place to rent "
+                    "(wants/needs accommodation, e.g. 'looking for a 2BHK', "
+                    "'need a flat in Baner', 'ISO a room').\n"
+                    "- SKIP: not about renting residential property (for sale, "
+                    "services, jobs, or unrelated).\n"
                     f"Text: '''{text}'''"
                 ),
-                system="Reply with only YES or NO. Do not add any introduction "
-                "or explanations.",
+                system="Reply with exactly one word: OFFER, SEEK, or SKIP. "
+                "No explanation.",
                 temperature=0.0,
-                max_tokens=1024,
+                max_tokens=8,
             )
             if response:
-                return "yes" in response.strip().lower()
+                token = response.strip().upper()
+                if token.startswith("OFFER"):
+                    return "offer"
+                if token.startswith("SEEK"):
+                    return "seek"
+                if token.startswith("SKIP"):
+                    return "not_rental"
         except QuotaExceededError:
             raise
         except Exception as e:  # noqa: BLE001
-            log.debug("classify_rental LLM error, using keyword fallback: %s", e)
+            log.debug("classify_post LLM error, using keyword fallback: %s", e)
 
-        keywords = [
-            "rent", "for rent", "room for rent",
-            "apartment for rent", "flat for rent", "house for rent",
-        ]
-        low = text.lower()
-        return any(k in low for k in keywords)
+        return _keyword_classify(text)
 
     # -- structured extraction --------------------------------------------
     def extract_listing(self, text: str) -> ExtractedListing | None:

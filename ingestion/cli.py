@@ -51,6 +51,15 @@ def _build_parser() -> argparse.ArgumentParser:
     backfill = sub.add_parser("backfill", help="import scraper/results/*.json")
     backfill.add_argument("--results-dir", default="scraper/results")
 
+    reclassify = sub.add_parser(
+        "reclassify",
+        help="re-check intent of existing listings; hide seeker/buyer posts",
+    )
+    reclassify.add_argument("--limit", type=int, help="only re-check N listings")
+    reclassify.add_argument("--dry-run", action="store_true",
+                            help="report counts without writing")
+    reclassify.add_argument("--workers", type=int)
+
     groups = sub.add_parser("groups", help="manage the Facebook group registry")
     groups.add_argument("action", choices=["list", "add", "remove"])
     groups.add_argument("url", nargs="?")
@@ -209,6 +218,17 @@ def _cmd_backfill(args, settings) -> int:
     return backfill(args.results_dir, settings)
 
 
+def _cmd_reclassify(args, settings) -> int:
+    from .scripts.reclassify_intent import reclassify
+
+    return reclassify(
+        settings,
+        limit=args.limit,
+        dry_run=args.dry_run,
+        workers=args.workers or settings.analyze_workers,
+    )
+
+
 def _cmd_groups(args, settings) -> int:
     from .db.engine import get_engine
     from .db.repo import Repo
@@ -364,6 +384,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_analyze(args, settings)
     if args.command == "backfill":
         return _cmd_backfill(args, settings)
+    if args.command == "reclassify":
+        return _cmd_reclassify(args, settings)
     if args.command == "groups":
         return _cmd_groups(args, settings)
     if args.command == "alerts":

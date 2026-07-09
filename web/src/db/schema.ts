@@ -126,6 +126,10 @@ export const listings = pgTable(
     contactName: text("contact_name"),
     contactUrl: text("contact_url"),
     isRental: boolean("is_rental").notNull().default(true),
+    // False = the poster is SEEKING a place (buyer/tenant), not offering one.
+    // The feed shows only offers. Defaults true so existing rows stay visible
+    // until the intent backfill reclassifies them.
+    isOffer: boolean("is_offer").notNull().default(true),
     status: text("status").$type<ListingStatus>().notNull().default("active"),
   },
   (t) => [
@@ -136,7 +140,12 @@ export const listings = pgTable(
     index("listings_rent_idx").on(t.rent),
     index("listings_lat_lon_idx").on(t.latitude, t.longitude),
     // covers the default feed predicate + ordering
-    index("listings_feed_idx").on(t.status, t.isRental, t.postedAt.desc()),
+    index("listings_feed_idx").on(
+      t.status,
+      t.isRental,
+      t.isOffer,
+      t.postedAt.desc(),
+    ),
     check(
       "listings_source_chk",
       sql`${t.source} in ('telegram','whatsapp','facebook')`,
