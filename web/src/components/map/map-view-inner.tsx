@@ -68,7 +68,7 @@ export default function MapViewInner({
               </span>
               <Link
                 href={`/listings/${p.id}`}
-                className="text-xs font-medium text-indigo-600 underline"
+                className="text-xs font-medium text-primary underline"
               >
                 View details
               </Link>

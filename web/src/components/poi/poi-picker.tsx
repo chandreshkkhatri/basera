@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import dynamic from "next/dynamic";
 import { LocateFixed, MapPin, Search, X } from "lucide-react";
 import {
@@ -87,6 +93,9 @@ function PoiPickerBody({
   const [searching, setSearching] = useState(false);
   const [locating, setLocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The query value we just set from picking a result — don't re-search it,
+  // which would reopen the dropdown on top of the controls below.
+  const pickedQuery = useRef<string | null>(null);
 
   // Debounced place search. All state writes happen inside the timer callback
   // (never synchronously in the effect body).
@@ -94,7 +103,7 @@ function PoiPickerBody({
     const q = query.trim();
     const ctrl = new AbortController();
     const timer = window.setTimeout(async () => {
-      if (q.length < 3) {
+      if (q.length < 3 || q === pickedQuery.current) {
         setResults([]);
         setSearching(false);
         return;
@@ -135,6 +144,7 @@ function PoiPickerBody({
     setPending({ lat: r.lat, lng: r.lng });
     setLabel(r.label);
     setResults([]);
+    pickedQuery.current = r.label;
     setQuery(r.label);
   };
 

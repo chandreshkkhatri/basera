@@ -38,6 +38,13 @@ const SOURCES: Record<Source, SourceMeta> = {
 
 export const SOURCE_KEYS = Object.keys(SOURCES) as Source[];
 
+/**
+ * Brand violet as a raw color for Leaflet markers that represent "a point"
+ * (the user's POI, a listing's own location) rather than a source. Kept here
+ * as the single definition since Leaflet can't consume Tailwind tokens.
+ */
+export const BRAND_MARKER = "oklch(0.62 0.24 293)";
+
 export function sourceMeta(source: string): SourceMeta {
   return (
     SOURCES[source as Source] ?? {

@@ -11,10 +11,10 @@ import { cn } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 const STATUS_COLOR: Record<string, string> = {
-  success: "text-emerald-600",
-  running: "text-sky-600",
+  success: "text-success",
+  running: "text-info",
   error: "text-destructive",
-  quota_exceeded: "text-amber-600",
+  quota_exceeded: "text-warning",
   login_failed: "text-destructive",
 };
 

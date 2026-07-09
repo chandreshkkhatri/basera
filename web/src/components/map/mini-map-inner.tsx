@@ -2,6 +2,7 @@
 
 import "leaflet/dist/leaflet.css";
 import { CircleMarker, MapContainer, TileLayer } from "react-leaflet";
+import { BRAND_MARKER } from "@/lib/sources";
 
 /** Single-marker map for the listing detail page. */
 export default function MiniMapInner({
@@ -26,7 +27,11 @@ export default function MiniMapInner({
       <CircleMarker
         center={[lat, lng]}
         radius={9}
-        pathOptions={{ color: "#4f46e5", fillColor: "#4f46e5", fillOpacity: 0.7 }}
+        pathOptions={{
+          color: BRAND_MARKER,
+          fillColor: BRAND_MARKER,
+          fillOpacity: 0.7,
+        }}
       />
     </MapContainer>
   );

@@ -9,6 +9,7 @@ import {
   useMap,
   useMapEvents,
 } from "react-leaflet";
+import { BRAND_MARKER } from "@/lib/sources";
 
 /** Fires the picker's onPick when the user taps anywhere on the map. */
 function ClickHandler({ onPick }: { onPick: (lat: number, lng: number) => void }) {
@@ -66,8 +67,8 @@ export default function PoiMapPickerInner({
           center={[lat, lng]}
           radius={9}
           pathOptions={{
-            color: "oklch(0.62 0.24 293)",
-            fillColor: "oklch(0.62 0.24 293)",
+            color: BRAND_MARKER,
+            fillColor: BRAND_MARKER,
             fillOpacity: 0.7,
             weight: 2,
           }}
