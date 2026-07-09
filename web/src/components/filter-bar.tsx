@@ -1,9 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { List, Map as MapIcon, SlidersHorizontal, X } from "lucide-react";
+import {
+  LayoutGrid,
+  List,
+  Map as MapIcon,
+  Rows3,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -22,6 +29,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { usePoi } from "@/components/poi/poi-provider";
+import { cn } from "@/lib/utils";
 import {
   BHK_BUCKETS,
   BHK_LABELS,
@@ -89,10 +97,24 @@ export function FilterBar() {
       } else {
         q.delete("poiLat");
         q.delete("poiLng");
-        if (value === "newest") q.delete("sort");
-        else q.set("sort", value);
+        // "newest" is set explicitly (not omitted) so the default-to-distance
+        // effect below can tell "chose newest" from "no choice yet".
+        q.set("sort", value);
       }
     });
+
+  // Default the feed to distance sort once the user has a saved point: when a
+  // POI exists and no sort has been chosen yet, apply distance. Picking any
+  // sort (incl. "newest") writes an explicit param, which stops this firing.
+  useEffect(() => {
+    if (poi && !searchParams.get("sort") && !searchParams.get("poiLat")) {
+      commit((q) => {
+        q.set("sort", "distance");
+        q.set("poiLat", String(poi.lat));
+        q.set("poiLng", String(poi.lng));
+      });
+    }
+  }, [poi, searchParams, commit]);
 
   const activeCount = [
     "city",
@@ -110,7 +132,10 @@ export function FilterBar() {
       ? { href: `/?${searchParams.toString()}`, label: "List", Icon: List }
       : { href: `/map?${searchParams.toString()}`, label: "Map", Icon: MapIcon };
 
-  const currentSort = get("sort") || "newest";
+  // With a POI but no explicit sort, the effect above is about to apply
+  // distance — reflect that in the selector immediately to avoid a flash.
+  const currentSort = get("sort") || (poi ? "distance" : "newest");
+  const currentLayout = get("layout") === "cards" ? "cards" : "list";
 
   const secondaryFilters = (
     <div className="flex flex-col gap-4">
@@ -239,13 +264,37 @@ export function FilterBar() {
           </Link>
         )}
 
-        {/* Mobile switches views via the BottomNav instead. */}
-        <Button asChild variant="ghost" size="sm" className="ml-auto hidden sm:inline-flex">
-          <Link href={otherView.href} scroll={false}>
-            <otherView.Icon className="size-3.5" />
-            {otherView.label}
-          </Link>
-        </Button>
+        <div className="ml-auto flex items-center gap-1.5">
+          {pathname === "/" && (
+            <div
+              role="group"
+              aria-label="Result layout"
+              className="flex rounded-lg border p-0.5"
+            >
+              <LayoutToggleButton
+                active={currentLayout === "list"}
+                onClick={() => setParam("layout", "")}
+                label="List view"
+              >
+                <Rows3 className="size-3.5" />
+              </LayoutToggleButton>
+              <LayoutToggleButton
+                active={currentLayout === "cards"}
+                onClick={() => setParam("layout", "cards")}
+                label="Card view"
+              >
+                <LayoutGrid className="size-3.5" />
+              </LayoutToggleButton>
+            </div>
+          )}
+          {/* Mobile switches feed/map views via the BottomNav instead. */}
+          <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+            <Link href={otherView.href} scroll={false}>
+              <otherView.Icon className="size-3.5" />
+              {otherView.label}
+            </Link>
+          </Button>
+        </div>
       </div>
       {/* Mirrors the server: the age penalty applies whenever the distance
           sort is usable (POI present). */}
@@ -256,6 +305,36 @@ export function FilterBar() {
         </div>
       )}
     </div>
+  );
+}
+
+function LayoutToggleButton({
+  active,
+  onClick,
+  label,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "flex size-6 items-center justify-center rounded-md transition-colors",
+        active
+          ? "bg-muted text-foreground"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

@@ -4,6 +4,7 @@ import { getEnabledCities, resolveCity } from "@/db/queries/cities";
 import { parseFilters } from "@/lib/filters";
 import { FilterBar } from "@/components/filter-bar";
 import { ListingGrid } from "@/components/listing-grid";
+import { ListingList } from "@/components/listing-list";
 import { Pagination } from "@/components/pagination";
 import { EmptyState } from "@/components/empty-state";
 
@@ -27,6 +28,12 @@ export default async function FeedPage({ searchParams }: PageProps<"/">) {
   }
 
   const { rows, total, page, pageSize } = await getListings(filters, city.id);
+
+  // Display-only layout choice (not a data filter). Default is the list view.
+  const layout =
+    (typeof params.layout === "string" ? params.layout : "") === "cards"
+      ? "cards"
+      : "list";
 
   // Base params for pagination links = current query minus `page` (keeps `city`).
   const baseParams = new URLSearchParams();
@@ -53,7 +60,11 @@ export default async function FeedPage({ searchParams }: PageProps<"/">) {
         <FilterBar />
       </Suspense>
 
-      <ListingGrid listings={rows} />
+      {layout === "cards" ? (
+        <ListingGrid listings={rows} />
+      ) : (
+        <ListingList listings={rows} />
+      )}
 
       <Pagination
         page={page}
