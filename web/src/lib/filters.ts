@@ -116,6 +116,14 @@ export function resolveSort(f: Filters): Sort {
   return f.sort ?? "newest";
 }
 
+/**
+ * Age penalty for the distance sort: each day since posting ranks like this
+ * many extra km of distance, so stale posts sink instead of being filtered
+ * out. Tune this one constant to shift the freshness/proximity balance.
+ * Referenced in FilterBar copy via interpolation.
+ */
+export const DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY = 1;
+
 export const POSTED_WITHIN_HOURS: Record<PostedWithin, number> = {
   "1d": 24,
   "3d": 72,
