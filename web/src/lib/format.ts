@@ -5,6 +5,12 @@ export function formatRent(rent: number | null): string {
   return `₹${rent.toLocaleString("en-IN")}/mo`;
 }
 
+/** Rent amount without the "/mo" suffix, for callers that style it separately. */
+export function formatRentAmount(rent: number | null): string | null {
+  if (rent == null) return null;
+  return `₹${rent.toLocaleString("en-IN")}`;
+}
+
 export function postedAgo(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   return `${formatDistanceToNowStrict(d)} ago`;

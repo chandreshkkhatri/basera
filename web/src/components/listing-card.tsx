@@ -1,64 +1,72 @@
 import Link from "next/link";
-import { Home, MapPin } from "lucide-react";
+import { MapPin } from "lucide-react";
 import type { ListingRow } from "@/db/queries/listings";
 import { SourceBadge } from "@/components/source-badge";
 import { PostedAgo } from "@/components/posted-ago";
 import { DistanceChip } from "@/components/distance-chip";
-import { formatRent } from "@/lib/format";
+import { ListingMedia } from "@/components/listing-media";
+import { Badge } from "@/components/ui/badge";
+import { formatRentAmount } from "@/lib/format";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
 
 export function ListingCard({ listing }: { listing: ListingRow }) {
   const furnishing = furnishingLabel(listing.furnishingStatus);
+  const rent = formatRentAmount(listing.rent);
+  const place =
+    [listing.location, listing.city].filter(Boolean).join(", ") ||
+    "Location unknown";
+
   return (
     <Link
       href={`/listings/${listing.id}`}
-      className="group flex flex-col gap-3 rounded-xl border bg-card p-4 transition-colors hover:border-foreground/20 hover:bg-accent/40"
+      className="group flex flex-col overflow-hidden rounded-xl border bg-card transition-colors hover:border-brand/50"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-lg font-semibold tracking-tight">
-            {formatRent(listing.rent)}
-          </p>
-          <p className="mt-0.5 flex items-center gap-1 text-sm text-muted-foreground">
+      <div className="relative aspect-16/10 overflow-hidden">
+        <ListingMedia source={listing.source} glyphClassName="text-6xl" />
+        <SourceBadge source={listing.source} className="absolute top-2 right-2" />
+      </div>
+
+      <div className="flex flex-1 flex-col gap-2.5 p-4">
+        <div>
+          {rent ? (
+            <p className="font-display text-2xl font-bold tracking-tight">
+              {rent}
+              <span className="ml-0.5 text-sm font-medium text-muted-foreground">
+                /mo
+              </span>
+            </p>
+          ) : (
+            <p className="font-display text-lg font-semibold text-muted-foreground">
+              Rent not specified
+            </p>
+          )}
+          <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
             <MapPin className="size-3.5 shrink-0" />
-            <span className="truncate">
-              {[listing.location, listing.city].filter(Boolean).join(", ") ||
-                "Location unknown"}
-            </span>
+            <span className="truncate">{place}</span>
           </p>
         </div>
-        <SourceBadge source={listing.source} />
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {listing.bhk && <Badge variant="secondary">{listing.bhk}</Badge>}
+          <Badge variant="secondary">
+            {genderLabel(listing.genderPreference)}
+          </Badge>
+          {furnishing && <Badge variant="secondary">{furnishing}</Badge>}
+          <DistanceChip
+            lat={listing.latitude}
+            lng={listing.longitude}
+            distanceKm={listing.distanceKm}
+          />
+        </div>
+
+        <p className="line-clamp-2 text-sm text-muted-foreground">
+          {listing.originalText}
+        </p>
+
+        <p className="mt-auto pt-1 text-xs text-muted-foreground">
+          Posted <PostedAgo date={listing.postedAt} />
+        </p>
       </div>
-
-      <div className="flex flex-wrap items-center gap-1.5 text-xs">
-        {listing.bhk && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 font-medium text-secondary-foreground">
-            <Home className="size-3" />
-            {listing.bhk}
-          </span>
-        )}
-        <span className="rounded-full bg-secondary px-2 py-0.5 text-secondary-foreground">
-          {genderLabel(listing.genderPreference)}
-        </span>
-        {furnishing && (
-          <span className="rounded-full bg-secondary px-2 py-0.5 text-secondary-foreground">
-            {furnishing}
-          </span>
-        )}
-        <DistanceChip
-          lat={listing.latitude}
-          lng={listing.longitude}
-          distanceKm={listing.distanceKm}
-        />
-      </div>
-
-      <p className="line-clamp-2 text-sm text-muted-foreground">
-        {listing.originalText}
-      </p>
-
-      <p className="mt-auto text-xs text-muted-foreground">
-        Posted <PostedAgo date={listing.postedAt} />
-      </p>
     </Link>
   );
 }

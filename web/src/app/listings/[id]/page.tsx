@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, TriangleAlert } from "lucide-react";
+import { ArrowLeft, MapPin, TriangleAlert } from "lucide-react";
 import { getListingById } from "@/db/queries/listings";
 import { SourceBadge } from "@/components/source-badge";
 import { PostedAgo } from "@/components/posted-ago";
 import { ContactButton } from "@/components/contact-button";
+import { DistanceChip } from "@/components/distance-chip";
+import { ListingMedia } from "@/components/listing-media";
 import { MiniMap } from "@/components/map/mini-map";
-import { formatRent } from "@/lib/format";
+import { Badge } from "@/components/ui/badge";
+import { formatRent, formatRentAmount } from "@/lib/format";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
 
 function isUrl(s: string | null): boolean {
@@ -23,12 +26,18 @@ export default async function ListingDetailPage({
   const listing = await getListingById(numId);
   if (!listing) notFound();
 
+  const rent = formatRentAmount(listing.rent);
+  const place =
+    [listing.location, listing.city].filter(Boolean).join(", ") ||
+    "Location unknown";
+  const furnishing = furnishingLabel(listing.furnishingStatus);
+
   const rows: [string, string | null][] = [
     ["Rent", formatRent(listing.rent)],
     ["Configuration", listing.bhk],
     ["Location", [listing.location, listing.city].filter(Boolean).join(", ") || null],
     ["Tenant preference", genderLabel(listing.genderPreference)],
-    ["Furnishing", furnishingLabel(listing.furnishingStatus)],
+    ["Furnishing", furnishing],
     ["Extra details", listing.additionalDetails],
     ["Posted by", listing.contactName],
   ];
@@ -43,27 +52,47 @@ export default async function ListingDetailPage({
         Back to listings
       </Link>
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <SourceBadge source={listing.source} />
-            <span className="text-sm text-muted-foreground">
-              Posted <PostedAgo date={listing.postedAt} />
-            </span>
-          </div>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-            {formatRent(listing.rent)}
-            {listing.bhk ? ` · ${listing.bhk}` : ""}
-          </h1>
-          <p className="text-muted-foreground">
-            {[listing.location, listing.city].filter(Boolean).join(", ") ||
-              "Location unknown"}
-          </p>
+      <div className="relative aspect-2/1 overflow-hidden rounded-xl border">
+        <ListingMedia source={listing.source} glyphClassName="text-8xl" />
+        <SourceBadge source={listing.source} className="absolute top-3 right-3" />
+      </div>
+
+      <div>
+        <span className="text-sm text-muted-foreground">
+          Posted <PostedAgo date={listing.postedAt} />
+        </span>
+        <h1 className="mt-1 font-display text-3xl font-bold tracking-tight">
+          {rent ? (
+            <>
+              {rent}
+              <span className="ml-1 text-lg font-medium text-muted-foreground">
+                /mo
+              </span>
+            </>
+          ) : (
+            "Rent not specified"
+          )}
+        </h1>
+        <p className="mt-1 flex items-center gap-1 text-muted-foreground">
+          <MapPin className="size-4 shrink-0" />
+          {place}
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          {listing.bhk && <Badge variant="secondary">{listing.bhk}</Badge>}
+          <Badge variant="secondary">
+            {genderLabel(listing.genderPreference)}
+          </Badge>
+          {furnishing && <Badge variant="secondary">{furnishing}</Badge>}
+          <DistanceChip
+            lat={listing.latitude}
+            lng={listing.longitude}
+            distanceKm={null}
+          />
         </div>
       </div>
 
       {listing.status !== "active" && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+        <div className="flex items-center gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
           <TriangleAlert className="size-4 shrink-0" />
           This post may no longer be available. The original link may still work.
         </div>

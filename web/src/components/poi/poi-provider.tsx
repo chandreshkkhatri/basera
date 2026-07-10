@@ -28,21 +28,24 @@ export function PoiProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Poi;
-        if (
-          typeof parsed?.lat === "number" &&
-          typeof parsed?.lng === "number"
-        ) {
-          setPoiState(parsed);
+    const id = window.setTimeout(() => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as Poi;
+          if (
+            typeof parsed?.lat === "number" &&
+            typeof parsed?.lng === "number"
+          ) {
+            setPoiState(parsed);
+          }
         }
+      } catch {
+        // ignore corrupt storage
       }
-    } catch {
-      // ignore corrupt storage
-    }
-    setReady(true);
+      setReady(true);
+    }, 0);
+    return () => window.clearTimeout(id);
   }, []);
 
   const setPoi = useCallback((next: Poi) => {

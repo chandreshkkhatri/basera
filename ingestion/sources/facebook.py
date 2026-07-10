@@ -10,7 +10,6 @@ so this source just yields RawPost objects.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -24,6 +23,7 @@ from playwright.sync_api import sync_playwright
 
 from ..config import Settings
 from ..models import RawPost
+from .base import SourceLoginError
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +84,27 @@ def normalize_post_url(url: str) -> str:
     return url
 
 
+def _is_post_href(href: str) -> bool:
+    """A permalink-shaped href — the post's own link, not a profile/reaction."""
+    if not href:
+        return False
+    return any(p in href for p in ("/posts/", "/permalink/", "story.php", "story_fbid="))
+
+
+def reconstruct_post_url(group: Optional[str], message_id: str) -> Optional[str]:
+    """Rebuild a canonical group-post permalink from a numeric post id captured
+    in the message id, when direct URL extraction came up empty. Only works when
+    the id is real (fb_post_<n>, not a content hash) and the group is known."""
+    m = re.match(r"fb_post_(\d+)$", message_id or "")
+    if not (m and group):
+        return None
+    gm = re.search(r"facebook\.com/groups/([^/?#]+)", group)
+    slug = gm.group(1) if gm else group.strip().strip("/")
+    if not slug or "/" in slug:
+        return None
+    return f"https://www.facebook.com/groups/{slug}/posts/{m.group(1)}/"
+
+
 def parse_facebook_time(time_text: str) -> datetime:
     try:
         now = datetime.now()
@@ -102,30 +123,6 @@ def parse_facebook_time(time_text: str) -> datetime:
             return now
     except Exception:  # noqa: BLE001
         return datetime.now()
-
-
-class GroupRegistry:
-    """Persisted list of known groups (moved to state/facebook_groups.json)."""
-
-    def __init__(self, settings: Settings):
-        self.path = settings.state_path / "facebook_groups.json"
-
-    def load(self) -> list[str]:
-        if self.path.exists():
-            try:
-                return json.loads(self.path.read_text(encoding="utf-8"))
-            except Exception as e:  # noqa: BLE001
-                log.warning("Failed to read group registry: %s", e)
-        return []
-
-    def add(self, group: str) -> list[str]:
-        groups = self.load()
-        if group not in groups:
-            groups.append(group)
-            self.path.write_text(
-                json.dumps(groups, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
-        return groups
 
 
 class GroupLock:
@@ -248,10 +245,15 @@ class FacebookSource:
 
         self._setup_playwright()
         try:
+            # Raise (not return) so the run is recorded as login_failed/error
+            # instead of a phantom "success" with 0 posts.
             if not self._login():
-                return
+                profile = s.chrome_user_data_dir or str(s.state_path / "profiles" / "facebook")
+                raise SourceLoginError(
+                    f"Facebook login expired or timed out (profile: {profile})"
+                )
             if not self._navigate(group):
-                return
+                raise RuntimeError(f"Facebook group page failed to load: {group}")
             self._switch_to_new_listings()
 
             seen_in_run: set[str] = set()
@@ -313,6 +315,11 @@ class FacebookSource:
                         continue
                     seen_in_run.add(message_id)
 
+                    # Last resort: rebuild the permalink from the post id when
+                    # direct extraction failed but the id is real.
+                    if not url:
+                        url = reconstruct_post_url(group, message_id) or ""
+
                     meta = {"mode": "browser"}
                     if s.save_html:
                         html_path = html_dir / f"{message_id}.html"
@@ -342,32 +349,46 @@ class FacebookSource:
         s = self.settings
         self.playwright = sync_playwright().start()
         user_data = s.chrome_user_data_dir or str(s.state_path / "profiles" / "facebook")
+        launch_options = {
+            "headless": s.headless,
+            "ignore_default_args": ["--no-sandbox"],
+        }
+        if s.browser_channel:
+            launch_options["channel"] = s.browser_channel
         try:
             self.context = self.playwright.chromium.launch_persistent_context(
                 user_data_dir=user_data,
-                headless=s.headless,
-                channel="chrome",
                 args=["--disable-blink-features=AutomationControlled"],
-                ignore_default_args=["--no-sandbox"],
+                **launch_options,
             )
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
         except Exception as e:  # noqa: BLE001
-            log.warning("Profile launch failed (%s); plain Chrome", e)
-            browser = self.playwright.chromium.launch(
-                headless=s.headless, channel="chrome",
-                ignore_default_args=["--no-sandbox"],
-            )
+            channel = s.browser_channel or "bundled Chromium"
+            log.warning("Profile launch failed (%s); plain %s", e, channel)
+            browser = self.playwright.chromium.launch(**launch_options)
             self.context = browser.new_context()
             self.page = self.context.new_page()
 
     def _login(self) -> bool:
         self.page.goto("https://www.facebook.com")
+        # The c_user session cookie is Facebook's canonical logged-in signal
+        # and is DOM-independent: headless Chrome gets a page variant without
+        # [data-testid='home-icon'] even when the session is perfectly valid.
+        self.page.wait_for_timeout(2000)
+        if self._logged_in_cookie():
+            log.info("Already logged in to Facebook (session cookie present)")
+            return True
         try:
             self.page.wait_for_selector("[data-testid='home-icon']", timeout=10000)
             log.info("Already logged in to Facebook")
             return True
         except Exception:  # noqa: BLE001
             pass
+        # Headless: nobody can complete an interactive login, so don't burn
+        # the full login_timeout_ms (5 min) per group — fail fast instead.
+        if self.settings.headless:
+            log.error("Not logged in and running headless; cannot log in interactively.")
+            return False
         log.info("Please log in to Facebook in the browser window...")
         try:
             self.page.wait_for_selector(
@@ -377,7 +398,20 @@ class FacebookSource:
             log.info("Logged in to Facebook")
             return True
         except Exception:  # noqa: BLE001
+            # Selector may be missing from this page variant even after a
+            # successful interactive login — trust the cookie before failing.
+            if self._logged_in_cookie():
+                log.info("Logged in to Facebook (session cookie present)")
+                return True
             log.error("Login timed out.")
+            return False
+
+    def _logged_in_cookie(self) -> bool:
+        try:
+            cookies = self.context.cookies("https://www.facebook.com")
+            return any(c["name"] == "c_user" for c in cookies)
+        except Exception as e:  # noqa: BLE001
+            log.debug("cookie check failed: %s", e)
             return False
 
     def _navigate(self, group: str) -> bool:
@@ -413,20 +447,26 @@ class FacebookSource:
             log.debug("Could not switch feed: %s", e)
 
     def _post_url(self, post) -> str:
+        # 1. The timestamp usually links to the post permalink.
         url = ""
         try:
             time_elem = post.locator("time")
             if time_elem.count() > 0:
                 parent = time_elem.locator("xpath=./ancestor::a")
                 if parent.count() > 0:
-                    url = parent.first.get_attribute("href")
+                    url = parent.first.get_attribute("href") or ""
         except Exception as e:  # noqa: BLE001
             log.debug("time-anchor url failed: %s", e)
-        if not url:
+        # 2. Otherwise scan candidate anchors for the first permalink-shaped one
+        #    (the first match isn't always the post link, so check each).
+        if not _is_post_href(url):
             try:
-                link = post.locator(LINK_SELECTOR)
-                if link.count() > 0:
-                    url = link.first.get_attribute("href")
+                links = post.locator(LINK_SELECTOR)
+                for i in range(min(links.count(), 8)):
+                    href = links.nth(i).get_attribute("href") or ""
+                    if _is_post_href(href):
+                        url = href
+                        break
             except Exception as e:  # noqa: BLE001
                 log.debug("link url failed: %s", e)
         return normalize_post_url(url)

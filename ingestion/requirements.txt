@@ -9,7 +9,6 @@ openai>=1.0
 google-genai>=1.0
 googlemaps>=4.10.0
 
-# Scrapers
-telethon>=1.28.5
+# Facebook scraping
 playwright>=1.40.0
 requests>=2.31.0

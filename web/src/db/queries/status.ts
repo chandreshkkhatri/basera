@@ -10,7 +10,17 @@ export type SourceHealth = {
 /** Latest run per source (DISTINCT ON). */
 export async function getSourceHealth(): Promise<ScrapeRun[]> {
   const rows = await db.execute<ScrapeRun>(sql`
-    select distinct on (source) *
+    select distinct on (source)
+      id,
+      source,
+      target,
+      started_at as "startedAt",
+      finished_at as "finishedAt",
+      posts_seen as "postsSeen",
+      posts_new as "postsNew",
+      listings_upserted as "listingsUpserted",
+      status,
+      error
     from ${scrapeRuns}
     order by source, started_at desc
   `);

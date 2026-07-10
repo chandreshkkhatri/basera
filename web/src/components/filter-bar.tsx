@@ -1,9 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { List, Map as MapIcon, SlidersHorizontal, X } from "lucide-react";
+import {
+  LayoutGrid,
+  List,
+  Map as MapIcon,
+  Rows3,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -13,6 +20,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 import {
   Sheet,
   SheetContent,
@@ -25,11 +33,11 @@ import { cn } from "@/lib/utils";
 import {
   BHK_BUCKETS,
   BHK_LABELS,
+  DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY,
   FURNISHINGS,
   GENDERS,
   POSTED_WITHIN,
 } from "@/lib/filters";
-import { SOURCE_KEYS, sourceMeta } from "@/lib/sources";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
 
 const POSTED_LABELS: Record<string, string> = {
@@ -46,7 +54,7 @@ const SORT_LABELS: Record<string, string> = {
   distance: "Nearest to my point",
 };
 
-export function FilterBar({ cities }: { cities: string[] }) {
+export function FilterBar() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -55,12 +63,6 @@ export function FilterBar({ cities }: { cities: string[] }) {
   const get = (k: string) => searchParams.get(k) ?? "";
   const getList = (k: string) =>
     (searchParams.get(k) ?? "").split(",").filter(Boolean);
-
-  // Local state for debounced rent inputs.
-  const [rentMin, setRentMin] = useState(get("rentMin"));
-  const [rentMax, setRentMax] = useState(get("rentMax"));
-  useEffect(() => setRentMin(get("rentMin")), [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => setRentMax(get("rentMax")), [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const commit = useCallback(
     (mutate: (q: URLSearchParams) => void) => {
@@ -85,20 +87,6 @@ export function FilterBar({ cities }: { cities: string[] }) {
       else q.delete(key);
     });
 
-  // Debounce rent inputs into the URL.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (rentMin !== get("rentMin")) setParam("rentMin", rentMin);
-    }, 400);
-    return () => clearTimeout(t);
-  }, [rentMin]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (rentMax !== get("rentMax")) setParam("rentMax", rentMax);
-    }, 400);
-    return () => clearTimeout(t);
-  }, [rentMax]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const setSort = (value: string) =>
     commit((q) => {
       if (value === "distance") {
@@ -109,10 +97,24 @@ export function FilterBar({ cities }: { cities: string[] }) {
       } else {
         q.delete("poiLat");
         q.delete("poiLng");
-        if (value === "newest") q.delete("sort");
-        else q.set("sort", value);
+        // "newest" is set explicitly (not omitted) so the default-to-distance
+        // effect below can tell "chose newest" from "no choice yet".
+        q.set("sort", value);
       }
     });
+
+  // Default the feed to distance sort once the user has a saved point: when a
+  // POI exists and no sort has been chosen yet, apply distance. Picking any
+  // sort (incl. "newest") writes an explicit param, which stops this firing.
+  useEffect(() => {
+    if (poi && !searchParams.get("sort") && !searchParams.get("poiLat")) {
+      commit((q) => {
+        q.set("sort", "distance");
+        q.set("poiLat", String(poi.lat));
+        q.set("poiLng", String(poi.lng));
+      });
+    }
+  }, [poi, searchParams, commit]);
 
   const activeCount = [
     "city",
@@ -130,46 +132,24 @@ export function FilterBar({ cities }: { cities: string[] }) {
       ? { href: `/?${searchParams.toString()}`, label: "List", Icon: List }
       : { href: `/map?${searchParams.toString()}`, label: "Map", Icon: MapIcon };
 
-  const currentSort = get("sort") || "newest";
-
-  const chip = (active: boolean) =>
-    cn(
-      "rounded-full border px-3 py-1 text-sm transition-colors",
-      active
-        ? "border-primary bg-primary text-primary-foreground"
-        : "hover:bg-muted",
-    );
+  // With a POI but no explicit sort, the effect above is about to apply
+  // distance — reflect that in the selector immediately to avoid a flash.
+  const currentSort = get("sort") || (poi ? "distance" : "newest");
+  const currentLayout = get("layout") === "cards" ? "cards" : "list";
 
   const secondaryFilters = (
     <div className="flex flex-col gap-4">
       <div>
-        <p className="mb-1.5 text-xs font-medium text-muted-foreground">Source</p>
-        <div className="flex flex-wrap gap-1.5">
-          {SOURCE_KEYS.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => toggleInList("source", s)}
-              className={chip(getList("source").includes(s))}
-            >
-              {sourceMeta(s).label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
         <p className="mb-1.5 text-xs font-medium text-muted-foreground">BHK</p>
         <div className="flex flex-wrap gap-1.5">
           {BHK_BUCKETS.map((b) => (
-            <button
+            <Chip
               key={b}
-              type="button"
+              active={getList("bhk").includes(b)}
               onClick={() => toggleInList("bhk", b)}
-              className={chip(getList("bhk").includes(b))}
             >
               {BHK_LABELS[b]}
-            </button>
+            </Chip>
           ))}
         </div>
       </div>
@@ -180,14 +160,13 @@ export function FilterBar({ cities }: { cities: string[] }) {
         </p>
         <div className="flex flex-wrap gap-1.5">
           {GENDERS.map((g) => (
-            <button
+            <Chip
               key={g}
-              type="button"
+              active={getList("gender").includes(g)}
               onClick={() => toggleInList("gender", g)}
-              className={chip(getList("gender").includes(g))}
             >
               {genderLabel(g)}
-            </button>
+            </Chip>
           ))}
         </div>
       </div>
@@ -198,14 +177,13 @@ export function FilterBar({ cities }: { cities: string[] }) {
         </p>
         <div className="flex flex-wrap gap-1.5">
           {FURNISHINGS.map((f) => (
-            <button
+            <Chip
               key={f}
-              type="button"
+              active={getList("furnishing").includes(f)}
               onClick={() => toggleInList("furnishing", f)}
-              className={chip(getList("furnishing").includes(f))}
             >
               {furnishingLabel(f)}
-            </button>
+            </Chip>
           ))}
         </div>
       </div>
@@ -216,16 +194,15 @@ export function FilterBar({ cities }: { cities: string[] }) {
         </p>
         <div className="flex flex-wrap gap-1.5">
           {POSTED_WITHIN.map((p) => (
-            <button
+            <Chip
               key={p}
-              type="button"
+              active={get("postedWithin") === p}
               onClick={() =>
                 setParam("postedWithin", get("postedWithin") === p ? "" : p)
               }
-              className={chip(get("postedWithin") === p)}
             >
               {POSTED_LABELS[p]}
-            </button>
+            </Chip>
           ))}
         </div>
       </div>
@@ -235,38 +212,11 @@ export function FilterBar({ cities }: { cities: string[] }) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Select
-          value={get("city") || "__all"}
-          onValueChange={(v) => setParam("city", v === "__all" ? "" : v)}
-        >
-          <SelectTrigger className="w-[150px]" size="sm">
-            <SelectValue placeholder="City" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all">All cities</SelectItem>
-            {cities.map((c) => (
-              <SelectItem key={c} value={c}>
-                {c}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Input
-          type="number"
-          inputMode="numeric"
-          placeholder="Min ₹"
-          value={rentMin}
-          onChange={(e) => setRentMin(e.target.value)}
-          className="h-8 w-[100px]"
-        />
-        <Input
-          type="number"
-          inputMode="numeric"
-          placeholder="Max ₹"
-          value={rentMax}
-          onChange={(e) => setRentMax(e.target.value)}
-          className="h-8 w-[100px]"
+        <RentInputs
+          key={`${get("rentMin")}:${get("rentMax")}`}
+          rentMinValue={get("rentMin")}
+          rentMaxValue={get("rentMax")}
+          setParam={setParam}
         />
 
         <Select value={currentSort} onValueChange={setSort}>
@@ -314,13 +264,125 @@ export function FilterBar({ cities }: { cities: string[] }) {
           </Link>
         )}
 
-        <Button asChild variant="ghost" size="sm" className="ml-auto">
-          <Link href={otherView.href} scroll={false}>
-            <otherView.Icon className="size-3.5" />
-            {otherView.label}
-          </Link>
-        </Button>
+        <div className="ml-auto flex items-center gap-1.5">
+          {pathname === "/" && (
+            <div
+              role="group"
+              aria-label="Result layout"
+              className="flex rounded-lg border p-0.5"
+            >
+              <LayoutToggleButton
+                active={currentLayout === "list"}
+                onClick={() => setParam("layout", "")}
+                label="List view"
+              >
+                <Rows3 className="size-3.5" />
+              </LayoutToggleButton>
+              <LayoutToggleButton
+                active={currentLayout === "cards"}
+                onClick={() => setParam("layout", "cards")}
+                label="Card view"
+              >
+                <LayoutGrid className="size-3.5" />
+              </LayoutToggleButton>
+            </div>
+          )}
+          {/* Mobile switches feed/map views via the BottomNav instead. */}
+          <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+            <Link href={otherView.href} scroll={false}>
+              <otherView.Icon className="size-3.5" />
+              {otherView.label}
+            </Link>
+          </Button>
+        </div>
       </div>
+      {/* Mirrors the server: the age penalty applies whenever the distance
+          sort is usable (POI present). */}
+      {currentSort === "distance" && get("poiLat") && get("poiLng") && (
+        <div className="text-xs text-muted-foreground italic">
+          * Older posts rank lower — each day of age counts like an extra{" "}
+          {DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY} km of distance.
+        </div>
+      )}
     </div>
+  );
+}
+
+function LayoutToggleButton({
+  active,
+  onClick,
+  label,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "flex size-6 items-center justify-center rounded-md transition-colors",
+        active
+          ? "bg-muted text-foreground"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function RentInputs({
+  rentMinValue,
+  rentMaxValue,
+  setParam,
+}: {
+  rentMinValue: string;
+  rentMaxValue: string;
+  setParam: (key: string, value: string) => void;
+}) {
+  const [rentMin, setRentMin] = useState(rentMinValue);
+  const [rentMax, setRentMax] = useState(rentMaxValue);
+
+  // Debounce rent inputs into the URL.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (rentMin !== rentMinValue) setParam("rentMin", rentMin);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [rentMin, rentMinValue, setParam]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (rentMax !== rentMaxValue) setParam("rentMax", rentMax);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [rentMax, rentMaxValue, setParam]);
+
+  return (
+    <>
+      <Input
+        type="number"
+        inputMode="numeric"
+        placeholder="Min ₹"
+        value={rentMin}
+        onChange={(e) => setRentMin(e.target.value)}
+        className="h-8 w-[100px]"
+      />
+      <Input
+        type="number"
+        inputMode="numeric"
+        placeholder="Max ₹"
+        value={rentMax}
+        onChange={(e) => setRentMax(e.target.value)}
+        className="h-8 w-[100px]"
+      />
+    </>
   );
 }

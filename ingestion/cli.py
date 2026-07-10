@@ -1,10 +1,21 @@
 """Command-line interface for the ingestion engine.
 
-    python -m ingestion run telegram|whatsapp|facebook [--limit N] [--scrape-only] ...
-    python -m ingestion analyze [--source X] [--workers N]
+    python -m ingestion run [--group URL] [--posts N] [--scrape-only] [--api]
+    python -m ingestion analyze [--workers N]
     python -m ingestion backfill [--results-dir scraper/results]
-    python -m ingestion groups list|add <url>
+    python -m ingestion groups list | add <url> --city <name> | remove <url>
+    python -m ingestion alerts test | flush | list [--limit N]
+    python -m ingestion watchdog
     python -m ingestion check
+
+Exit codes (2 is reserved by argparse for usage errors); the continuous
+runner (scripts/run_window.py) reacts to these:
+
+    0  success
+    1  >=1 group errored / schema drift / other failure
+    3  LLM quota exceeded (run or analyze)
+    4  login required (re-login to Facebook in the browser profile)
+    5  database unreachable
 """
 
 from __future__ import annotations
@@ -24,89 +35,158 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="scrape a source into the database")
-    run.add_argument("source", choices=["telegram", "whatsapp", "facebook"])
-    run.add_argument("--limit", type=int, help="max messages/posts to scrape")
-    run.add_argument("--posts", type=int, help="alias for --limit (facebook)")
+    run = sub.add_parser("run", help="scrape Facebook groups into the database")
+    run.add_argument("source", nargs="?", choices=["facebook"], default="facebook")
+    run.add_argument("--limit", type=int, help="max posts per group")
+    run.add_argument("--posts", type=int, help="alias for --limit")
     run.add_argument("--scrape-only", action="store_true",
                      help="capture raw posts without LLM analysis")
-    run.add_argument("--group", type=str, help="facebook group URL/name")
-    run.add_argument("--chat", type=str, help="whatsapp/telegram target chat")
-    run.add_argument("--api", action="store_true", help="facebook Graph API mode")
+    run.add_argument("--group", type=str,
+                     help="scrape only this group URL (default: all enabled groups)")
+    run.add_argument("--api", action="store_true", help="Graph API mode")
 
     analyze = sub.add_parser("analyze", help="LLM-analyze unprocessed raw posts")
-    analyze.add_argument("--source", choices=["telegram", "whatsapp", "facebook"])
     analyze.add_argument("--workers", type=int)
 
     backfill = sub.add_parser("backfill", help="import scraper/results/*.json")
     backfill.add_argument("--results-dir", default="scraper/results")
 
-    groups = sub.add_parser("groups", help="manage the facebook group registry")
-    groups.add_argument("action", choices=["list", "add"])
+    reclassify = sub.add_parser(
+        "reclassify",
+        help="re-check intent of existing listings; hide seeker/buyer posts",
+    )
+    reclassify.add_argument("--limit", type=int, help="only re-check N listings")
+    reclassify.add_argument("--dry-run", action="store_true",
+                            help="report counts without writing")
+    reclassify.add_argument("--workers", type=int)
+
+    groups = sub.add_parser("groups", help="manage the Facebook group registry")
+    groups.add_argument("action", choices=["list", "add", "remove"])
     groups.add_argument("url", nargs="?")
+    groups.add_argument("--city", type=str, help="city to assign the group to (add)")
+    groups.add_argument("--fb-group-id", type=str, help="Graph API group id (add)")
+
+    alerts = sub.add_parser("alerts", help="test/flush/list the Telegram alert outbox")
+    alerts.add_argument("action", choices=["test", "flush", "list"])
+    alerts.add_argument("--limit", type=int, default=20, help="rows to show (list)")
+
+    sub.add_parser(
+        "watchdog",
+        help="stale-data checks + deliver queued alerts (run periodically)",
+    )
 
     sub.add_parser("check", help="validate settings, DB connectivity and schema")
     return parser
 
 
-def _cmd_run(args, settings) -> int:
+# Exit codes (see module docstring). 2 is argparse's.
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_QUOTA = 3
+EXIT_LOGIN = 4
+EXIT_DB_DOWN = 5
+
+_STATUS_EXIT = {
+    "success": EXIT_OK,
+    "error": EXIT_ERROR,
+    "quota_exceeded": EXIT_QUOTA,
+    "login_failed": EXIT_LOGIN,
+}
+
+
+def _checked_repo(settings):
+    """Engine + Repo + schema check, mapped to exit codes.
+
+    Returns (repo, exit_code); repo is None when exit_code != 0. Runs before
+    any Playwright launch so a down DB fails fast (exit 5)."""
+    from sqlalchemy.exc import OperationalError
+
     from .db.engine import get_engine
-    from .db.repo import Repo
+    from .db.repo import Repo, SchemaError
+
+    repo = Repo(get_engine(settings))
+    try:
+        repo.schema_check()
+    except OperationalError as e:
+        log.error("Database unreachable: %s", e)
+        return None, EXIT_DB_DOWN
+    except SchemaError as e:
+        log.error("%s", e)
+        return None, EXIT_ERROR
+    return repo, EXIT_OK
+
+
+def _cmd_run(args, settings) -> int:
+    from .alerts import Alerter
     from .geocode import Geocoder
     from .llm import LLMClient
     from .pipeline import Pipeline, run_source
+    from .sources.facebook import FacebookSource, GroupLock
 
-    settings.require(args.source)
-    engine = get_engine(settings)
-    repo = Repo(engine)
-    repo.schema_check()
+    settings.require("facebook")
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
 
-    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo)
+    alerter = Alerter(settings, repo)
+    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo, alerter)
     limit = args.limit or args.posts
-    target = args.group or args.chat
 
-    if args.source == "telegram":
-        from .sources.telegram import TelegramSource
-        source = TelegramSource(settings)
-    elif args.source == "whatsapp":
-        from .sources.whatsapp import WhatsAppSource
-        source = WhatsAppSource(settings)
+    # Which groups to scrape: an explicit --group, else all enabled groups whose
+    # city is enabled (registered via /admin or `ingestion groups add`).
+    if args.group:
+        targets = [args.group]
     else:
-        from .sources.facebook import FacebookSource, GroupLock
+        targets = [g["url"] for g in repo.list_enabled_groups()]
+        if not targets:
+            log.warning(
+                "No enabled groups registered. Add one with "
+                "`ingestion groups add <url> --city <name>` or via /admin."
+            )
+            return EXIT_OK
+        log.info("Scraping %d enabled group(s)", len(targets))
+
+    worst_rc = EXIT_OK
+    for target in targets:
         source = FacebookSource(settings, use_api=args.api)
-        group = args.group or settings.facebook_target_group
-        lock = GroupLock(settings, group or "default")
+        lock = GroupLock(settings, target)
         if not lock.acquire():
-            return 1
+            continue
         try:
-            run_source(source, pipeline, repo, target=target,
-                       limit=limit, scrape_only=args.scrape_only)
+            result = run_source(source, pipeline, repo, target=target,
+                                limit=limit, scrape_only=args.scrape_only,
+                                alerter=alerter)
         finally:
             lock.release()
-        return 0
+        worst_rc = max(worst_rc, _STATUS_EXIT.get(result.status, EXIT_ERROR))
+        if result.status == "login_failed":
+            # Same browser profile for every group: each remaining group would
+            # just burn the login timeout again. Stop and ask for re-login.
+            log.error("Skipping remaining groups until Facebook login is restored.")
+            break
 
-    run_source(source, pipeline, repo, target=target,
-               limit=limit, scrape_only=args.scrape_only)
-    return 0
+    alerter.flush_pending()
+    return worst_rc
 
 
 def _cmd_analyze(args, settings) -> int:
-    from .db.engine import get_engine
-    from .db.repo import Repo
+    from .alerts import Alerter
     from .geocode import Geocoder
     from .llm import LLMClient
     from .models import RawPost
     from .pipeline import Pipeline
 
-    settings.require(args.source or "facebook")
-    engine = get_engine(settings)
-    repo = Repo(engine)
-    repo.schema_check()
+    settings.require("facebook")
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
 
-    rows = repo.unprocessed_raw_posts(args.source)
+    alerter = Alerter(settings, repo)
+    rows = repo.unprocessed_raw_posts("facebook")
     if not rows:
         log.info("No unprocessed raw posts.")
-        return 0
+        alerter.flush_pending()
+        return EXIT_OK
     posts = [
         RawPost(
             source=r["source"], source_id=r["source_id"], text=r["text"],
@@ -116,12 +196,20 @@ def _cmd_analyze(args, settings) -> int:
         )
         for r in rows
     ]
-    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo)
+    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo, alerter)
     workers = args.workers or settings.analyze_workers
     log.info("Analyzing %d raw posts with %d workers", len(posts), workers)
     stats = pipeline.process_many(posts, workers)
     log.info("Analyze complete: %s", stats.summary())
-    return 0
+    if stats.quota_exceeded:
+        alerter.emit(
+            "quota_exceeded",
+            f"Analyze stopped early — LLM quota exceeded ({stats.summary()})",
+        )
+        alerter.flush_pending()
+        return EXIT_QUOTA
+    alerter.flush_pending()
+    return EXIT_OK
 
 
 def _cmd_backfill(args, settings) -> int:
@@ -130,23 +218,130 @@ def _cmd_backfill(args, settings) -> int:
     return backfill(args.results_dir, settings)
 
 
-def _cmd_groups(args, settings) -> int:
-    from .sources.facebook import GroupRegistry
+def _cmd_reclassify(args, settings) -> int:
+    from .scripts.reclassify_intent import reclassify
 
-    registry = GroupRegistry(settings)
+    return reclassify(
+        settings,
+        limit=args.limit,
+        dry_run=args.dry_run,
+        workers=args.workers or settings.analyze_workers,
+    )
+
+
+def _cmd_groups(args, settings) -> int:
+    from .db.engine import get_engine
+    from .db.repo import Repo
+
+    repo = Repo(get_engine(settings))
+    repo.schema_check()
+
     if args.action == "list":
-        groups = registry.load()
-        if not groups:
-            print("No groups registered.")
-        for g in groups:
-            print(g)
+        rows = repo.list_enabled_groups()
+        if not rows:
+            print("No enabled groups registered.")
+        for g in rows:
+            print(f"[{g['city_name']}] {g['url']}")
     elif args.action == "add":
-        if not args.url:
-            print("Usage: ingestion groups add <url>")
+        if not args.url or not args.city:
+            print("Usage: ingestion groups add <url> --city <name> [--fb-group-id <id>]")
             return 1
-        registry.add(args.url)
-        print(f"Added: {args.url}")
+        repo.add_group(args.url, args.city, args.fb_group_id)
+        print(f"Added group to '{args.city}': {args.url}")
+    elif args.action == "remove":
+        if not args.url:
+            print("Usage: ingestion groups remove <url>")
+            return 1
+        if not repo.delete_group(args.url):
+            print(f"Group not found: {args.url}")
+            return 1
+        print(f"Removed group: {args.url}")
     return 0
+
+
+def _cmd_alerts(args, settings) -> int:
+    from .alerts import Alerter
+
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
+    alerter = Alerter(settings, repo)
+
+    if args.action == "test":
+        if not alerter.configured:
+            print("Telegram not configured: set TELEGRAM_BOT_TOKEN and "
+                  "TELEGRAM_ALERT_CHAT_ID in .env")
+            return 1
+        if alerter.send_test():
+            print("Test alert delivered — check your Telegram chat.")
+            return 0
+        print("Test alert NOT delivered (recorded in the outbox; "
+              "see `ingestion alerts list` for the error).")
+        return 1
+    if args.action == "flush":
+        delivered = alerter.flush_pending()
+        print(f"Delivered {delivered} queued alert(s).")
+        return 0
+    # list
+    rows = repo.recent_alerts(args.limit)
+    if not rows:
+        print("No alerts recorded.")
+    for r in rows:
+        when = r["created_at"].strftime("%Y-%m-%d %H:%M") if r["created_at"] else "?"
+        line = (f"#{r['id']} {when} [{r['category']}/{r['severity']}] "
+                f"{r['delivery_status']}: {r['message']}")
+        if r["delivery_error"]:
+            line += f" ({r['delivery_error']})"
+        print(line)
+    return 0
+
+
+def _cmd_watchdog(settings) -> int:
+    """Stale-data checks + outbox flush. Cheap; run every cycle / via cron."""
+    from datetime import datetime, timezone
+
+    from .alerts import Alerter
+
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
+    alerter = Alerter(settings, repo)
+
+    health = repo.run_health()
+    now = datetime.now(timezone.utc)
+
+    def _age_hours(ts) -> float | None:
+        if ts is None:
+            return None
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (now - ts).total_seconds() / 3600
+
+    success_age = _age_hours(health["last_success_at"])
+    yield_age = _age_hours(health["last_yield_at"])
+
+    if success_age is None or success_age > settings.alert_stale_run_hours:
+        label = f"{success_age:.1f}h ago" if success_age is not None else "never"
+        alerter.emit(
+            "stale_data",
+            f"No successful scrape run in the last "
+            f"{settings.alert_stale_run_hours:g}h (last: {label}).",
+        )
+    elif yield_age is None or yield_age > settings.alert_stale_posts_hours:
+        label = f"{yield_age:.1f}h ago" if yield_age is not None else "never"
+        alerter.emit(
+            "stale_data",
+            f"Runs succeed but no new posts in the last "
+            f"{settings.alert_stale_posts_hours:g}h (last: {label}).",
+        )
+    else:
+        log.info(
+            "Watchdog OK: last success %.1fh ago, last new posts %.1fh ago",
+            success_age, yield_age,
+        )
+
+    alerter.flush_pending()
+    return EXIT_OK
 
 
 def _cmd_check(settings) -> int:
@@ -189,8 +384,14 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_analyze(args, settings)
     if args.command == "backfill":
         return _cmd_backfill(args, settings)
+    if args.command == "reclassify":
+        return _cmd_reclassify(args, settings)
     if args.command == "groups":
         return _cmd_groups(args, settings)
+    if args.command == "alerts":
+        return _cmd_alerts(args, settings)
+    if args.command == "watchdog":
+        return _cmd_watchdog(settings)
     if args.command == "check":
         return _cmd_check(settings)
     return 1

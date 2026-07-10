@@ -15,39 +15,51 @@ const MapViewInner = dynamic(() => import("./map-view-inner"), {
   ),
 });
 
-export function MapScreen({ cities }: { cities: string[] }) {
+export function MapScreen({
+  cityName,
+  center,
+}: {
+  cityName: string;
+  center: [number, number] | null;
+}) {
   const searchParams = useSearchParams();
-  const [rows, setRows] = useState<MapRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [result, setResult] = useState<{
+    qs: string;
+    rows: MapRow[];
+    total: number;
+  }>({ qs: "", rows: [], total: 0 });
 
   // The searchParams string is the fetch key: any filter change refetches.
   const qs = searchParams.toString();
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     const params = new URLSearchParams(qs);
     params.set("view", "map");
     fetch(`/api/listings?${params.toString()}`)
       .then((r) => r.json())
       .then((data: { listings: MapRow[]; total: number }) => {
         if (cancelled) return;
-        setRows(data.listings);
-        setTotal(data.total);
-        setLoading(false);
+        setResult({ qs, rows: data.listings, total: data.total });
       })
-      .catch(() => !cancelled && setLoading(false));
+      .catch(() => {
+        if (!cancelled) setResult({ qs, rows: [], total: 0 });
+      });
     return () => {
       cancelled = true;
     };
   }, [qs]);
 
+  const loading = result.qs !== qs;
+  const rows = loading ? [] : result.rows;
+  const total = loading ? 0 : result.total;
   const capped = total > MAP_LIMIT;
 
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Map</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {cityName} on the map
+        </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {loading
             ? "Loading map…"
@@ -57,11 +69,11 @@ export function MapScreen({ cities }: { cities: string[] }) {
       </div>
 
       <Suspense>
-        <FilterBar cities={cities} />
+        <FilterBar />
       </Suspense>
 
       <div className="h-[70vh] w-full overflow-hidden rounded-xl border">
-        <MapViewInner rows={rows} />
+        <MapViewInner rows={rows} fallbackCenter={center} />
       </div>
     </div>
   );

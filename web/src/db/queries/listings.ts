@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, gte, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { listings, type Listing } from "@/db/schema";
 import { haversineKmSql } from "@/lib/distance";
 import {
+  DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY,
   MAP_LIMIT,
   PAGE_SIZE,
   POSTED_WITHIN_HOURS,
@@ -24,16 +25,15 @@ const BHK_REGEX: Record<BhkBucket, string> = {
   "4+": String.raw`\y([4-9]|\d{2,})\s*BHK`,
 };
 
-function buildWhere(f: Filters): SQL {
+function buildWhere(f: Filters, cityId: number): SQL {
   const conds: (SQL | undefined)[] = [
-    // Base predicate: only live rentals in the public feed.
+    // Base predicate: only live rental OFFERS for the selected city in the
+    // feed. isOffer excludes seeker/buyer posts ("looking for a flat").
+    eq(listings.cityId, cityId),
     eq(listings.isRental, true),
+    eq(listings.isOffer, true),
     eq(listings.status, "active"),
   ];
-
-  if (f.city) {
-    conds.push(sql`lower(${listings.city}) = lower(${f.city})`);
-  }
 
   // Rent filters exclude rows without a rent value only when a bound is set.
   if (f.rentMin != null) conds.push(gte(listings.rent, f.rentMin));
@@ -67,15 +67,6 @@ function buildWhere(f: Filters): SQL {
     );
   }
 
-  if (f.source.length) {
-    conds.push(
-      sql`${listings.source} in ${sql`(${sql.join(
-        f.source.map((v) => sql`${v}`),
-        sql`, `,
-      )})`}`,
-    );
-  }
-
   if (f.postedWithin) {
     const hours = POSTED_WITHIN_HOURS[f.postedWithin];
     conds.push(
@@ -96,10 +87,17 @@ function orderBy(f: Filters, dist: SQL<number> | null) {
       return [sql`${listings.rent} asc nulls last`, desc(listings.postedAt)];
     case "rent_desc":
       return [sql`${listings.rent} desc nulls last`, desc(listings.postedAt)];
-    case "distance":
+    case "distance": {
       // dist is guaranteed non-null here because resolveSort downgrades to
-      // "newest" when no POI is present.
-      return [sql`${dist} asc nulls last`, desc(listings.postedAt)];
+      // "newest" when no POI is present. Age penalty: each day since posting
+      // ranks like K extra km, so stale posts sink instead of being filtered
+      // out. Rows without coordinates yield a NULL score and stay last.
+      // Clamped at 0: scraped postedAt can sit slightly in the future, which
+      // must not turn into a ranking boost.
+      const ageDays = sql`greatest(extract(epoch from now() - ${listings.postedAt}) / 86400.0, 0)`;
+      const score = sql`${dist} + ${ageDays} * ${DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY}`;
+      return [sql`${score} asc nulls last`, desc(listings.postedAt)];
+    }
     case "newest":
     default:
       return [desc(listings.postedAt)];
@@ -113,8 +111,11 @@ export type FeedResult = {
   pageSize: number;
 };
 
-export async function getListings(f: Filters): Promise<FeedResult> {
-  const where = buildWhere(f);
+export async function getListings(
+  f: Filters,
+  cityId: number,
+): Promise<FeedResult> {
+  const where = buildWhere(f, cityId);
   const dist = distanceExpr(f);
   const offset = (f.page - 1) * PAGE_SIZE;
 
@@ -160,8 +161,9 @@ export type MapRow = Pick<
 
 export async function getMapListings(
   f: Filters,
+  cityId: number,
 ): Promise<{ rows: MapRow[]; total: number }> {
-  const where = and(buildWhere(f), sql`${listings.latitude} is not null`)!;
+  const where = and(buildWhere(f, cityId), sql`${listings.latitude} is not null`)!;
 
   const rows = await db
     .select({
@@ -195,20 +197,4 @@ export async function getListingById(id: number): Promise<Listing | null> {
     .where(eq(listings.id, id))
     .limit(1);
   return rows[0] ?? null;
-}
-
-/** Distinct non-null cities for the filter dropdown. */
-export async function getCities(): Promise<string[]> {
-  const rows = await db
-    .selectDistinct({ city: listings.city })
-    .from(listings)
-    .where(
-      and(
-        eq(listings.isRental, true),
-        eq(listings.status, "active"),
-        sql`${listings.city} is not null`,
-      ),
-    )
-    .orderBy(asc(listings.city));
-  return rows.map((r) => r.city!).filter(Boolean);
 }

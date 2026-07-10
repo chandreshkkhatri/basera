@@ -1,12 +1,14 @@
 import { z } from "zod";
-import type { Source } from "@/db/schema";
-import { SOURCE_KEYS } from "@/lib/sources";
 
 /**
  * URL searchParams are the single source of truth for the listings feed, map,
  * and API. This module is the ONE place that parses them, so filter semantics
  * live in exactly one spot. Everything optional; unknown/garbage values are
  * dropped rather than erroring, so a hand-edited URL never 500s.
+ *
+ * The selected `city` (slug) is NOT parsed here — it is a required scope
+ * resolved server-side to a city id and passed to the queries separately. It
+ * still travels in the URL for shareability and is preserved by the FilterBar.
  */
 
 export const PAGE_SIZE = 24;
@@ -64,16 +66,11 @@ const numeric = z
   });
 
 export const filtersSchema = z.object({
-  city: z
-    .string()
-    .optional()
-    .transform((v) => (v && v.trim() !== "" ? v.trim() : undefined)),
   rentMin: numeric,
   rentMax: numeric,
   bhk: csv(BHK_BUCKETS),
   gender: csv(GENDERS),
   furnishing: csv(FURNISHINGS),
-  source: csv(SOURCE_KEYS),
   postedWithin: z.enum(POSTED_WITHIN).optional().catch(undefined),
   sort: z.enum(SORTS).optional().catch(undefined),
   page: numeric.transform((n) => (n && n >= 1 ? Math.floor(n) : 1)),
@@ -93,13 +90,11 @@ function firstValue(v: string | string[] | undefined): string | undefined {
 export function parseFilters(params: RawParams): Filters {
   const flat: Record<string, string | undefined> = {};
   for (const key of [
-    "city",
     "rentMin",
     "rentMax",
     "bhk",
     "gender",
     "furnishing",
-    "source",
     "postedWithin",
     "sort",
     "page",
@@ -121,23 +116,13 @@ export function resolveSort(f: Filters): Sort {
   return f.sort ?? "newest";
 }
 
-/** Serialize filters back to a query string (used by FilterBar & links). */
-export function filtersToQuery(f: Partial<Filters>): string {
-  const q = new URLSearchParams();
-  if (f.city) q.set("city", f.city);
-  if (f.rentMin != null) q.set("rentMin", String(f.rentMin));
-  if (f.rentMax != null) q.set("rentMax", String(f.rentMax));
-  if (f.bhk?.length) q.set("bhk", f.bhk.join(","));
-  if (f.gender?.length) q.set("gender", f.gender.join(","));
-  if (f.furnishing?.length) q.set("furnishing", f.furnishing.join(","));
-  if (f.source?.length) q.set("source", f.source.join(","));
-  if (f.postedWithin) q.set("postedWithin", f.postedWithin);
-  if (f.sort && f.sort !== "newest") q.set("sort", f.sort);
-  if (f.page && f.page > 1) q.set("page", String(f.page));
-  if (f.poiLat != null) q.set("poiLat", String(f.poiLat));
-  if (f.poiLng != null) q.set("poiLng", String(f.poiLng));
-  return q.toString();
-}
+/**
+ * Age penalty for the distance sort: each day since posting ranks like this
+ * many extra km of distance, so stale posts sink instead of being filtered
+ * out. Tune this one constant to shift the freshness/proximity balance.
+ * Referenced in FilterBar copy via interpolation.
+ */
+export const DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY = 1;
 
 export const POSTED_WITHIN_HOURS: Record<PostedWithin, number> = {
   "1d": 24,
@@ -145,5 +130,3 @@ export const POSTED_WITHIN_HOURS: Record<PostedWithin, number> = {
   "7d": 168,
   "30d": 720,
 };
-
-export type { Source };

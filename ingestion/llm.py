@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from typing import Literal
 
 from .config import Settings
 from .models import (
@@ -22,9 +23,41 @@ from .models import (
 
 log = logging.getLogger(__name__)
 
+# Post intent: an offered rental (feed-worthy), a seeker/buyer post, or neither.
+PostCategory = Literal["offer", "seek", "not_rental"]
+
+# Keyword fallback (used only when the LLM call fails, not on quota). Ordered:
+# an explicit seek phrase wins over a generic rent keyword, since seeker posts
+# also contain "rent".
+_SEEK_KEYWORDS = (
+    "looking for", "look for a", "need a", "needed", "in search of", "iso ",
+    "searching for", "want a", "require a", "requirement", "wanted on rent",
+    "accommodation required",
+)
+_OFFER_KEYWORDS = (
+    "for rent", "available for rent", "available on rent", "room available",
+    "flat available", "renting out", "up for rent", "rent out",
+)
+_RENT_KEYWORDS = ("rent", "rental", "bhk", "flatmate", "roommate", "pg ")
+
+
+def _keyword_classify(text: str) -> PostCategory:
+    low = text.lower()
+    if any(k in low for k in _OFFER_KEYWORDS):
+        return "offer"
+    if any(k in low for k in _SEEK_KEYWORDS):
+        return "seek"
+    if any(k in low for k in _RENT_KEYWORDS):
+        return "offer"
+    return "not_rental"
+
 
 class QuotaExceededError(Exception):
     """Raised when the LLM API's rate limit / quota is fully exhausted."""
+
+
+class RetryableLLMError(Exception):
+    """Raised when LLM extraction failed in a way that should be retried later."""
 
 
 def _is_rate_limit(err: Exception) -> bool:
@@ -44,6 +77,22 @@ def _retry_after_seconds(err: Exception, default: float) -> float:
     if match:
         return float(match.group(1)) + 1
     return default
+
+
+def _is_transient(err: Exception) -> bool:
+    s = str(err).lower()
+    return (
+        "timeout" in s
+        or "timed out" in s
+        or "connection reset" in s
+        or "connection aborted" in s
+        or "connection error" in s
+        or "temporarily unavailable" in s
+        or "server error" in s
+        or "internal error" in s
+        or "bad gateway" in s
+        or "service unavailable" in s
+    )
 
 
 class LLMClient:
@@ -131,55 +180,101 @@ class LLMClient:
         )
         return resp.text
 
-    # -- rental classification --------------------------------------------
-    def classify_rental(self, text: str) -> bool:
-        """True if the post is about renting residential property. LLM first,
-        keyword fallback on non-quota errors (ported from facebook_bot.py)."""
+    # -- post classification ----------------------------------------------
+    def classify_post(self, text: str) -> PostCategory:
+        """Classify a post into 'offer' (a residential rental being offered),
+        'seek' (someone looking FOR a place to rent), or 'not_rental'. Only
+        offers belong in the feed. LLM first, keyword fallback on non-quota
+        errors."""
         try:
             response = self.complete(
                 prompt=(
-                    "Determine if this Facebook post is about renting "
-                    "residential property. Reply YES or NO.\n"
+                    "A rental listings site shows only posts OFFERING a "
+                    "residential property to rent. Classify this Facebook "
+                    "post into one word:\n"
+                    "- OFFER: a flat/room/house is being offered for rent "
+                    "(by an owner, landlord, broker, or someone with a place "
+                    "who wants a flatmate to join THEIR home).\n"
+                    "- SEEK: the poster is looking FOR a place to rent "
+                    "(wants/needs accommodation, e.g. 'looking for a 2BHK', "
+                    "'need a flat in Baner', 'ISO a room').\n"
+                    "- SKIP: not about renting residential property (for sale, "
+                    "services, jobs, or unrelated).\n"
                     f"Text: '''{text}'''"
                 ),
-                system="Reply with only YES or NO. Do not add any introduction "
-                "or explanations.",
+                system="Reply with exactly one word: OFFER, SEEK, or SKIP. "
+                "No explanation.",
                 temperature=0.0,
-                max_tokens=1024,
+                max_tokens=8,
             )
             if response:
-                return "yes" in response.strip().lower()
+                token = response.strip().upper()
+                if token.startswith("OFFER"):
+                    return "offer"
+                if token.startswith("SEEK"):
+                    return "seek"
+                if token.startswith("SKIP"):
+                    return "not_rental"
         except QuotaExceededError:
             raise
         except Exception as e:  # noqa: BLE001
-            log.debug("classify_rental LLM error, using keyword fallback: %s", e)
+            log.debug("classify_post LLM error, using keyword fallback: %s", e)
 
-        keywords = [
-            "rent", "for rent", "room for rent",
-            "apartment for rent", "flat for rent", "house for rent",
-        ]
-        low = text.lower()
-        return any(k in low for k in keywords)
+        return _keyword_classify(text)
 
     # -- structured extraction --------------------------------------------
     def extract_listing(self, text: str) -> ExtractedListing | None:
         """Extract structured rental fields via provider function calling."""
-        try:
-            if self.provider == "gemini":
-                raw = self._gemini_extract(text)
-            else:
-                raw = self._openai_extract(text)
-        except QuotaExceededError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            if _is_rate_limit(e):
-                raise QuotaExceededError(str(e)) from e
-            log.error("extract_listing error: %s", e)
-            return None
+        retries = self.settings.llm_retries
+        last_error: Exception | None = None
 
-        if raw is None:
-            return None
-        return ExtractedListing.model_validate(raw)
+        for attempt in range(retries):
+            try:
+                if self.provider == "gemini":
+                    raw = self._gemini_extract(text)
+                else:
+                    raw = self._openai_extract(text)
+
+                if raw is None:
+                    return None
+                return ExtractedListing.model_validate(raw)
+            except QuotaExceededError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                last_error = e
+                if _is_rate_limit(e):
+                    wait = _retry_after_seconds(e, self.settings.llm_backoff_base_s)
+                    if attempt < retries - 1:
+                        log.warning(
+                            "Rate limit hit during extraction; waiting %.0fs (attempt %d/%d)",
+                            wait,
+                            attempt + 1,
+                            retries,
+                        )
+                        time.sleep(wait)
+                        continue
+                    raise QuotaExceededError(str(e)) from e
+
+                if _is_transient(e):
+                    wait = self.settings.llm_backoff_base_s * (attempt + 1)
+                    if attempt < retries - 1:
+                        log.warning(
+                            "Transient extraction error; waiting %.0fs (attempt %d/%d): %s",
+                            wait,
+                            attempt + 1,
+                            retries,
+                            e,
+                        )
+                        time.sleep(wait)
+                        continue
+                    raise RetryableLLMError(str(e)) from e
+
+                log.error("extract_listing error: %s", e)
+                return None
+
+        if last_error is not None:
+            raise RetryableLLMError(str(last_error)) from last_error
+        return None
 
     def _openai_extract(self, text: str) -> dict | None:
         resp = self._openai.chat.completions.create(

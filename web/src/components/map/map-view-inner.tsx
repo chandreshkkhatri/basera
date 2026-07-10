@@ -13,16 +13,16 @@ import type { MapRow } from "@/db/queries/listings";
 import { sourceMeta } from "@/lib/sources";
 import { formatRent } from "@/lib/format";
 
-const SOURCE_COLOR: Record<string, string> = {
-  telegram: "#0284c7",
-  whatsapp: "#059669",
-  facebook: "#4f46e5",
-};
-
-// Pune fallback center when no listings have coordinates.
+// Pune fallback center when the selected city has no coordinates set.
 const DEFAULT_CENTER: [number, number] = [18.5204, 73.8567];
 
-export default function MapViewInner({ rows }: { rows: MapRow[] }) {
+export default function MapViewInner({
+  rows,
+  fallbackCenter,
+}: {
+  rows: MapRow[];
+  fallbackCenter?: [number, number] | null;
+}) {
   const points = rows.filter(
     (r) => r.latitude != null && r.longitude != null,
   ) as (MapRow & { latitude: number; longitude: number })[];
@@ -34,7 +34,7 @@ export default function MapViewInner({ rows }: { rows: MapRow[] }) {
 
   return (
     <MapContainer
-      center={DEFAULT_CENTER}
+      center={fallbackCenter ?? DEFAULT_CENTER}
       zoom={11}
       bounds={bounds}
       scrollWheelZoom
@@ -50,8 +50,8 @@ export default function MapViewInner({ rows }: { rows: MapRow[] }) {
           center={[p.latitude, p.longitude]}
           radius={7}
           pathOptions={{
-            color: SOURCE_COLOR[p.source] ?? "#666",
-            fillColor: SOURCE_COLOR[p.source] ?? "#666",
+            color: sourceMeta(p.source).accent,
+            fillColor: sourceMeta(p.source).accent,
             fillOpacity: 0.7,
             weight: 1.5,
           }}
@@ -68,7 +68,7 @@ export default function MapViewInner({ rows }: { rows: MapRow[] }) {
               </span>
               <Link
                 href={`/listings/${p.id}`}
-                className="text-xs font-medium text-indigo-600 underline"
+                className="text-xs font-medium text-primary underline"
               >
                 View details
               </Link>
