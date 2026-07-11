@@ -46,17 +46,7 @@ class Pipeline:
         """Classify, extract, geocode and upsert one raw post. Returns True if a
         listing was upserted. Marks the raw post processed either way. Raises
         QuotaExceededError up to the caller so it can stop the run."""
-        category = self.llm.classify_post(post.text)
-        if category == "not_rental":
-            stats.not_rental += 1
-            self.repo.mark_processed(post.source, post.source_id, status="not_rental")
-            return False
-        if category == "seek":
-            # A buyer/tenant looking FOR a place — not a listing we show.
-            stats.not_offer += 1
-            self.repo.mark_processed(post.source, post.source_id, status="seeker")
-            return False
-
+        # One LLM call classifies AND extracts (intent rides in the tool schema).
         try:
             extracted = self.llm.extract_listing(post.text)
         except RetryableLLMError as e:
@@ -75,6 +65,21 @@ class Pipeline:
                 log.error("Giving up on %s after repeated LLM failures: %s", post.source_id, e)
                 self._alert_gave_up(post, str(e))
             return False
+
+        # Gate on intent before demanding a location — a seeker post without a
+        # locality is still conclusively a seeker post.
+        if extracted is not None:
+            if extracted.intent == "not_rental":
+                stats.not_rental += 1
+                self.repo.mark_processed(
+                    post.source, post.source_id, status="not_rental"
+                )
+                return False
+            if extracted.intent == "seek":
+                # A buyer/tenant looking FOR a place — not a listing we show.
+                stats.not_offer += 1
+                self.repo.mark_processed(post.source, post.source_id, status="seeker")
+                return False
 
         if not extracted or not extracted.location:
             stats.extraction_failed += 1
@@ -99,7 +104,14 @@ class Pipeline:
         else:
             stats.geocode_failed += 1
 
-        self.repo.upsert_listing(post, extracted, lat, lon, is_rental=True, is_offer=True)
+        settings = self.llm.settings
+        self.repo.upsert_listing(
+            post, extracted, lat, lon,
+            is_rental=True,
+            is_offer=True,
+            dedup_similarity=settings.dedup_similarity,
+            dedup_window_days=settings.dedup_window_days,
+        )
         self.repo.mark_processed(post.source, post.source_id, status="processed")
         stats.listings_upserted += 1
         log.info(
