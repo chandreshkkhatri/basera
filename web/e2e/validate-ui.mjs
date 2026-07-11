@@ -27,7 +27,8 @@ try {
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
   const htmlClass = await page.locator("html").getAttribute("class");
   check("default theme is dark", (htmlClass ?? "").includes("dark"), htmlClass ?? "");
-  check("list view is default", await page.locator("ul.divide-y > li").first().isVisible());
+  // Default layout is the list view: a table on sm+, stacked rows on mobile.
+  check("list view is default (desktop table)", await page.locator("[data-slot='table'] tbody tr").first().isVisible());
   await page.screenshot({ path: `${OUT}/01-feed-list.png`, fullPage: false });
 
   // Layout toggle -> cards
@@ -82,6 +83,7 @@ try {
   const mpage = await mobile.newPage();
   await mpage.goto(`${BASE}/`, { waitUntil: "networkidle" });
   check("mobile: bottom nav present", await mpage.locator("nav[aria-label='Primary']").isVisible());
+  check("mobile: stacked list rows", await mpage.locator("ul.divide-y > li").first().isVisible());
   await mpage.screenshot({ path: `${OUT}/06-mobile-feed.png`, fullPage: false });
   await mpage.goto(`${BASE}/status`, { waitUntil: "networkidle" });
   await mpage.screenshot({ path: `${OUT}/07-status.png`, fullPage: false });
