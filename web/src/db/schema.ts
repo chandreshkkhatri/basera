@@ -265,6 +265,23 @@ export const alerts = pgTable(
   ],
 );
 
+/**
+ * Geocoding results cache, written and read by the Python ingestion engine.
+ * The distinct locality space per city is tiny, so caching cuts the Google
+ * Maps bill to near zero after warm-up. A row with NULL coordinates records
+ * "geocoder found nothing" (only definite no-results are cached — API errors
+ * are not).
+ */
+export const geocodeCache = pgTable("geocode_cache", {
+  // Normalized lookup string: lowercased "location, city".
+  query: text("query").primaryKey(),
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export type Listing = typeof listings.$inferSelect;
 export type NewListing = typeof listings.$inferInsert;
 export type ScrapeRun = typeof scrapeRuns.$inferSelect;

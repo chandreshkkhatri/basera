@@ -7,7 +7,17 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import Engine, and_, delete, func, inspect, or_, select, update
+from sqlalchemy import (
+    Engine,
+    and_,
+    case,
+    delete,
+    func,
+    inspect,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 
 from ..models import ExtractedListing, RawPost, RunStats
@@ -302,6 +312,37 @@ class Repo:
         return deleted
 
     # -- listings ------------------------------------------------------
+    def _find_near_duplicate(
+        self, post: RawPost, threshold: float, window_days: int
+    ) -> Optional[int]:
+        """Id of a recent same-group listing whose text is trigram-similar to
+        this post (rental posts get re-posted with tiny edits, defeating the
+        exact source_id dedup). Runs on its own connection so a missing
+        pg_trgm extension degrades to 'no duplicate' without poisoning the
+        caller's transaction."""
+        c = tables.listings.c
+        sim = func.similarity(c.original_text, post.text)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+        stmt = (
+            select(c.id)
+            .where(
+                c.source == post.source,
+                c.source_id != post.source_id,
+                c.source_group == post.source_group,
+                c.posted_at > cutoff,
+                sim >= threshold,
+            )
+            .order_by(sim.desc())
+            .limit(1)
+        )
+        try:
+            with self.engine.connect() as conn:
+                row = conn.execute(stmt).first()
+            return row.id if row else None
+        except Exception as e:  # noqa: BLE001 — e.g. pg_trgm not installed yet
+            log.warning("Near-duplicate check unavailable: %s", e)
+            return None
+
     def upsert_listing(
         self,
         post: RawPost,
@@ -310,10 +351,17 @@ class Repo:
         lon: Optional[float],
         is_rental: bool = True,
         is_offer: bool = True,
+        *,
+        dedup_similarity: float = 0.9,
+        dedup_window_days: int = 14,
     ) -> None:
         """Insert or update a listing. City is derived from the group (source of
         truth); the LLM city is only a fallback name. On conflict, refresh
-        extracted/geocoded fields + scraped_at, but NEVER touch `status`."""
+        extracted/geocoded fields + scraped_at. A near-duplicate of a recent
+        same-group listing refreshes that listing instead of inserting a
+        duplicate row. Status: a re-scraped/re-posted listing resurrects
+        'stale' -> 'active' (it's demonstrably alive again), but an admin
+        'hidden' is never overwritten."""
         rent = int(extracted.rent) if extracted.rent else None
         city_id, city_name = self.city_for_group(post.source_group)
         values = {
@@ -339,12 +387,52 @@ class Repo:
             "is_rental": is_rental,
             "is_offer": is_offer,
         }
+        # Seeing the post again proves it's alive: resurrect stale -> active.
+        # 'hidden' (an admin action) survives re-scrapes.
+        resurrect = case(
+            (tables.listings.c.status == "stale", "active"),
+            else_=tables.listings.c.status,
+        )
+
+        # Near-duplicate collapse — only when this post isn't already a row of
+        # its own (then the ON CONFLICT path below refreshes it).
+        c = tables.listings.c
+        if dedup_similarity > 0 and post.source_group:
+            with self.engine.connect() as conn:
+                exists = conn.execute(
+                    select(c.id).where(
+                        c.source == post.source, c.source_id == post.source_id
+                    )
+                ).first()
+            if exists is None:
+                dup_id = self._find_near_duplicate(
+                    post, dedup_similarity, dedup_window_days
+                )
+                if dup_id is not None:
+                    refresh = {
+                        k: v for k, v in values.items()
+                        if k not in ("source", "source_id")
+                    }
+                    refresh["status"] = resurrect
+                    with self.engine.begin() as conn:
+                        conn.execute(
+                            update(tables.listings)
+                            .where(c.id == dup_id)
+                            .values(**refresh)
+                        )
+                    log.info(
+                        "Post %s is a near-duplicate of listing %d — refreshed it "
+                        "instead of inserting.", post.source_id, dup_id,
+                    )
+                    return
+
         stmt = insert(tables.listings).values(**values)
         update_cols = {
             k: getattr(stmt.excluded, k)
             for k in values
             if k not in ("source", "source_id")
         }
+        update_cols["status"] = resurrect
         stmt = stmt.on_conflict_do_update(
             index_elements=["source", "source_id"], set_=update_cols
         )
@@ -367,6 +455,35 @@ class Repo:
             update(tables.listings)
             .where(tables.listings.c.id == listing_id)
             .values(is_offer=is_offer)
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    # -- geocode cache ---------------------------------------------------
+    # A hit returns (lat, lng) where both-None means "cached no-result";
+    # a miss returns None (not cached yet).
+
+    def geocode_cache_get(
+        self, query: str
+    ) -> Optional[tuple[Optional[float], Optional[float]]]:
+        c = tables.geocode_cache.c
+        stmt = select(c.latitude, c.longitude).where(c.query == query)
+        with self.engine.connect() as conn:
+            row = conn.execute(stmt).first()
+        return (row.latitude, row.longitude) if row is not None else None
+
+    def geocode_cache_put(
+        self, query: str, lat: Optional[float], lng: Optional[float]
+    ) -> None:
+        stmt = (
+            insert(tables.geocode_cache)
+            .values(
+                query=query,
+                latitude=lat,
+                longitude=lng,
+                created_at=datetime.now(timezone.utc),
+            )
+            .on_conflict_do_nothing(index_elements=["query"])
         )
         with self.engine.begin() as conn:
             conn.execute(stmt)
@@ -412,6 +529,21 @@ class Repo:
             return conn.execute(
                 select(func.count()).select_from(tables.listings)
             ).scalar_one()
+
+    def mark_stale_listings(self, older_than_days: int) -> int:
+        """Flip long-dead posts active -> stale so the feed stays fresh.
+        Only touches 'active' (never 'hidden'). The inverse transition lives in
+        upsert_listing: a re-scraped post resurrects stale -> active.
+        Returns the number of rows flipped."""
+        c = tables.listings.c
+        cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        stmt = (
+            update(tables.listings)
+            .where(c.status == "active", c.posted_at < cutoff)
+            .values(status="stale")
+        )
+        with self.engine.begin() as conn:
+            return conn.execute(stmt).rowcount or 0
 
     # -- alerts (outbox) -------------------------------------------------
     # Rows are always recorded; delivery_status tracks the outbox lifecycle:
