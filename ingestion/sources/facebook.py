@@ -126,8 +126,10 @@ def parse_facebook_time(time_text: str) -> datetime:
         if "day" in t:
             return now - timedelta(days=int(re.search(r"(\d+)", t).group(1)))
         try:
-            parsed = datetime.strptime(t, "%B %d at %I:%M %p")
-            parsed = parsed.replace(year=now.year, tzinfo=timezone.utc)
+            # Parse with the year embedded: Facebook omits it, and yearless
+            # strptime defaults to 1900 (and changes behavior in Python 3.15).
+            parsed = datetime.strptime(f"{now.year} {t}", "%Y %B %d at %I:%M %p")
+            parsed = parsed.replace(tzinfo=timezone.utc)
             if parsed > now + timedelta(days=1):
                 parsed = parsed.replace(year=now.year - 1)
             return min(parsed, now)
