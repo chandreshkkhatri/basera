@@ -139,6 +139,16 @@ export const listings = pgTable(
     index("listings_city_id_idx").on(t.cityId),
     index("listings_rent_idx").on(t.rent),
     index("listings_lat_lon_idx").on(t.latitude, t.longitude),
+    // trigram indexes accelerate the locality search's ILIKE '%...%'
+    // (pg_trgm installed in migration 0004)
+    index("listings_location_trgm_idx").using(
+      "gin",
+      sql`${t.location} gin_trgm_ops`,
+    ),
+    index("listings_original_text_trgm_idx").using(
+      "gin",
+      sql`${t.originalText} gin_trgm_ops`,
+    ),
     // covers the default feed predicate + ordering
     index("listings_feed_idx").on(
       t.status,

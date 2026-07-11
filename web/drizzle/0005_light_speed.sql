@@ -1,0 +1,2 @@
+CREATE INDEX "listings_location_trgm_idx" ON "listings" USING gin ("location" gin_trgm_ops);--> statement-breakpoint
+CREATE INDEX "listings_original_text_trgm_idx" ON "listings" USING gin ("original_text" gin_trgm_ops);

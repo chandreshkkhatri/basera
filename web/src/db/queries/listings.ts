@@ -35,6 +35,19 @@ function buildWhere(f: Filters, cityId: number): SQL {
     eq(listings.status, "active"),
   ];
 
+  if (f.q) {
+    // Locality search over the extracted location and the raw post text.
+    // Escape LIKE metacharacters so "100%_furnished" searches literally.
+    const escaped = f.q.replace(/[\\%_]/g, (m) => `\\${m}`);
+    const pattern = `%${escaped}%`;
+    conds.push(
+      or(
+        sql`${listings.location} ilike ${pattern}`,
+        sql`${listings.originalText} ilike ${pattern}`,
+      ),
+    );
+  }
+
   // Rent filters exclude rows without a rent value only when a bound is set.
   if (f.rentMin != null) conds.push(gte(listings.rent, f.rentMin));
   if (f.rentMax != null) conds.push(lte(listings.rent, f.rentMax));

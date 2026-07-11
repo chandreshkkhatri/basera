@@ -8,6 +8,7 @@ import {
   List,
   Map as MapIcon,
   Rows3,
+  Search,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -117,6 +118,7 @@ export function FilterBar() {
   }, [poi, searchParams, commit]);
 
   const activeCount = [
+    "q",
     "city",
     "rentMin",
     "rentMax",
@@ -212,6 +214,8 @@ export function FilterBar() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
+        <SearchInput key={`q:${get("q")}`} value={get("q")} setParam={setParam} />
+
         <RentInputs
           key={`${get("rentMin")}:${get("rentMax")}`}
           rentMinValue={get("rentMin")}
@@ -335,6 +339,38 @@ function LayoutToggleButton({
     >
       {children}
     </button>
+  );
+}
+
+function SearchInput({
+  value,
+  setParam,
+}: {
+  value: string;
+  setParam: (key: string, value: string) => void;
+}) {
+  const [q, setQ] = useState(value);
+
+  // Debounce the locality search into the URL (same pattern as RentInputs).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (q !== value) setParam("q", q.trim());
+    }, 400);
+    return () => clearTimeout(t);
+  }, [q, value, setParam]);
+
+  return (
+    <div className="relative">
+      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        type="search"
+        placeholder="Search locality…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        className="h-8 w-40 pl-8 sm:w-48"
+        aria-label="Search locality"
+      />
+    </div>
   );
 }
 
