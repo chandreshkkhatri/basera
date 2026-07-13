@@ -43,6 +43,13 @@
       "when": 1783733358810,
       "tag": "0005_light_speed",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783942960155,
+      "tag": "0006_solid_ultimates",
+      "breakpoints": true
     }
   ]
 }

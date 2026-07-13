@@ -545,6 +545,14 @@ class Repo:
         with self.engine.begin() as conn:
             return conn.execute(stmt).rowcount or 0
 
+    def disabled_alert_categories(self) -> set[str]:
+        """Categories an admin has toggled off in /admin. Callers must treat a
+        DB failure as 'nothing disabled' — alerting may not depend on the DB."""
+        c = tables.alert_categories.c
+        stmt = select(c.category).where(c.enabled.is_(False))
+        with self.engine.connect() as conn:
+            return {r.category for r in conn.execute(stmt)}
+
     # -- alerts (outbox) -------------------------------------------------
     # Rows are always recorded; delivery_status tracks the outbox lifecycle:
     # pending -> sending (claimed, 5-min lease) -> sent | failed, or

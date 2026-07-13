@@ -276,6 +276,20 @@ export const alerts = pgTable(
 );
 
 /**
+ * Admin-managed delivery toggles for the ingestion engine's Telegram alerts
+ * (see ingestion/alerts.py). Rows exist only for categories an admin has
+ * touched; absent = enabled. Alerts remain admin/operator-facing — this is a
+ * runtime override of the coarse ALERT_CATEGORIES env setting.
+ */
+export const alertCategories = pgTable("alert_categories", {
+  category: text("category").primaryKey(),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/**
  * Geocoding results cache, written and read by the Python ingestion engine.
  * The distinct locality space per city is tiny, so caching cuts the Google
  * Maps bill to near zero after warm-up. A row with NULL coordinates records

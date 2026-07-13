@@ -47,11 +47,16 @@ class Alerter:
     down and therefore can't rely on the DB for anything.
     """
 
+    # How long a fetched set of admin toggles stays fresh.
+    DB_TOGGLE_TTL_S = 60.0
+
     def __init__(self, settings: Settings, repo: Optional[Repo] = None):
         self.settings = settings
         self.repo = repo
         # Fallback cooldown when the DB can't be probed (or repo is None).
         self._mem_last_sent: dict[str, datetime] = {}
+        # Cached admin toggles (alert_categories table) + fetch time.
+        self._db_disabled_cache: tuple[datetime, set[str]] | None = None
 
     @property
     def configured(self) -> bool:
@@ -90,10 +95,9 @@ class Alerter:
         except Exception as e:  # noqa: BLE001
             log.debug("Alert flush skipped (DB unavailable?): %s", e)
             return 0
-        enabled = self.settings.enabled_alert_categories()
         for row in rows:
             try:
-                if enabled is not None and row["category"] not in enabled:
+                if self._category_disabled(row["category"]):
                     # Category disabled after the row was queued.
                     self.repo.mark_alert_suppressed(row["id"], "category_disabled")
                     continue
@@ -129,6 +133,30 @@ class Alerter:
         )
 
     # -- internals --------------------------------------------------------
+    def _category_disabled(self, category: str) -> bool:
+        """Env toggle (coarse, ALERT_CATEGORIES) OR admin toggle (DB table).
+        DB failures mean 'nothing disabled' — alerting may not depend on it."""
+        enabled = self.settings.enabled_alert_categories()
+        if enabled is not None and category not in enabled:
+            return True
+        return category in self._db_disabled()
+
+    def _db_disabled(self) -> set[str]:
+        if self.repo is None:
+            return set()
+        now = datetime.now(timezone.utc)
+        if self._db_disabled_cache is not None:
+            fetched_at, cached = self._db_disabled_cache
+            if (now - fetched_at).total_seconds() < self.DB_TOGGLE_TTL_S:
+                return cached
+        try:
+            disabled = self.repo.disabled_alert_categories()
+        except Exception as e:  # noqa: BLE001
+            log.debug("Alert toggle probe failed (DB unavailable?): %s", e)
+            return set()
+        self._db_disabled_cache = (now, disabled)
+        return disabled
+
     def _emit(
         self,
         category: str,
@@ -138,10 +166,9 @@ class Alerter:
         details: Optional[dict[str, Any]],
     ) -> None:
         severity = severity or CATEGORY_SEVERITY.get(category, "error")
-        enabled = self.settings.enabled_alert_categories()
 
         suppressed_reason: Optional[str] = None
-        if enabled is not None and category not in enabled:
+        if self._category_disabled(category):
             suppressed_reason = "category_disabled"
         elif not self.configured:
             suppressed_reason = "not_configured"

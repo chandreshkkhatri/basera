@@ -1,6 +1,11 @@
 import { adminConfigured, isAdmin } from "@/lib/admin-auth";
-import { getCitiesWithCounts, getGroupsWithCity } from "@/db/queries/admin";
+import {
+  getAlertCategoryToggles,
+  getCitiesWithCounts,
+  getGroupsWithCity,
+} from "@/db/queries/admin";
 import { AdminLogin } from "@/components/admin/admin-login";
+import { AlertsAdmin } from "@/components/admin/alerts-admin";
 import { CitiesAdmin } from "@/components/admin/cities-admin";
 import { GroupsAdmin } from "@/components/admin/groups-admin";
 import { LogoutButton } from "@/components/admin/logout-button";
@@ -14,9 +19,10 @@ export default async function AdminPage() {
     return <AdminLogin configured={adminConfigured()} />;
   }
 
-  const [cities, groups] = await Promise.all([
+  const [cities, groups, alertToggles] = await Promise.all([
     getCitiesWithCounts(),
     getGroupsWithCity(),
+    getAlertCategoryToggles(),
   ]);
 
   return (
@@ -37,6 +43,7 @@ export default async function AdminPage() {
         groups={groups}
         cities={cities.map((c) => ({ id: c.id, name: c.name }))}
       />
+      <AlertsAdmin categories={alertToggles} />
     </div>
   );
 }

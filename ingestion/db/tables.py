@@ -109,6 +109,15 @@ scrape_runs = Table(
     Column("error", Text),
 )
 
+alert_categories = Table(
+    "alert_categories",
+    metadata,
+    # Admin-managed delivery toggles; absent row = enabled.
+    Column("category", Text, primary_key=True),
+    Column("enabled", Boolean, nullable=False),
+    Column("updated_at", TIMESTAMP(timezone=True)),
+)
+
 geocode_cache = Table(
     "geocode_cache",
     metadata,
@@ -146,5 +155,6 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "raw_posts": {c.name for c in raw_posts.columns},
     "scrape_runs": {c.name for c in scrape_runs.columns},
     "geocode_cache": {c.name for c in geocode_cache.columns},
+    "alert_categories": {c.name for c in alert_categories.columns},
     "alerts": {c.name for c in alerts.columns},
 }

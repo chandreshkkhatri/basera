@@ -1,6 +1,12 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { cities, groups, listings, type City } from "@/db/schema";
+import {
+  alertCategories,
+  cities,
+  groups,
+  listings,
+  type City,
+} from "@/db/schema";
 import { slugify } from "@/lib/slug";
 
 export type GroupWithCity = {
@@ -100,6 +106,53 @@ export async function setGroupEnabled(id: number, enabled: boolean): Promise<voi
 
 export async function deleteGroup(id: number): Promise<void> {
   await db.delete(groups).where(eq(groups.id, id));
+}
+
+/**
+ * Known alert categories, mirroring ingestion/alerts.py CATEGORY_SEVERITY
+ * (minus "test", which is always delivered). The table only stores overrides;
+ * an absent row means enabled.
+ */
+export const ALERT_CATEGORY_META = [
+  { category: "run_failure", label: "Run failure", hint: "A scrape run errored" },
+  { category: "login_expiry", label: "Login expiry", hint: "Facebook session expired; re-login needed" },
+  { category: "quota_exceeded", label: "Quota exceeded", hint: "LLM API quota exhausted" },
+  { category: "stale_data", label: "Stale data", hint: "No successful scrapes / new posts in the watch window" },
+  { category: "processing_failed", label: "Processing failed", hint: "A post exhausted its AI-processing retries" },
+  { category: "db_unavailable", label: "DB unavailable", hint: "The runner can't reach Postgres" },
+] as const;
+
+export type AlertCategoryToggle = {
+  category: string;
+  label: string;
+  hint: string;
+  enabled: boolean;
+};
+
+export async function getAlertCategoryToggles(): Promise<AlertCategoryToggle[]> {
+  const rows = await db.select().from(alertCategories);
+  const overrides = new Map(rows.map((r) => [r.category, r.enabled]));
+  return ALERT_CATEGORY_META.map((meta) => ({
+    ...meta,
+    enabled: overrides.get(meta.category) ?? true,
+  }));
+}
+
+export function isKnownAlertCategory(category: string): boolean {
+  return ALERT_CATEGORY_META.some((m) => m.category === category);
+}
+
+export async function setAlertCategoryEnabled(
+  category: string,
+  enabled: boolean,
+): Promise<void> {
+  await db
+    .insert(alertCategories)
+    .values({ category, enabled, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: alertCategories.category,
+      set: { enabled, updatedAt: new Date() },
+    });
 }
 
 /** Guard: a city must exist and (optionally) be checked before assigning. */
