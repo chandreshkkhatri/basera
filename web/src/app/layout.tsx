@@ -6,6 +6,7 @@ import { PoiProvider } from "@/components/poi/poi-provider";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { getEnabledCities } from "@/db/queries/cities";
+import { siteUrl } from "@/lib/site";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -18,9 +19,18 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Basera — Rooms & rentals near you",
+  metadataBase: siteUrl(),
+  title: {
+    default: "Basera — Rooms & rentals near you",
+    // Child pages set just their own part; the brand rides along.
+    template: "%s | Basera",
+  },
   description:
     "Browse house rentals aggregated from Facebook, Telegram and WhatsApp groups, sorted by distance from your point, and contact the poster directly.",
+  openGraph: {
+    siteName: "Basera",
+    type: "website",
+  },
 };
 
 export const viewport: Viewport = {

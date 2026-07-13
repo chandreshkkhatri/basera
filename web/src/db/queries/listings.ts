@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { and, desc, eq, gte, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { listings, type Listing } from "@/db/schema";
@@ -203,11 +204,14 @@ export async function getMapListings(
   return { rows, total: countResult[0]?.count ?? 0 };
 }
 
-export async function getListingById(id: number): Promise<Listing | null> {
-  const rows = await db
-    .select()
-    .from(listings)
-    .where(eq(listings.id, id))
-    .limit(1);
-  return rows[0] ?? null;
-}
+/** cache(): the detail page and its generateMetadata both fetch the row. */
+export const getListingById = cache(
+  async (id: number): Promise<Listing | null> => {
+    const rows = await db
+      .select()
+      .from(listings)
+      .where(eq(listings.id, id))
+      .limit(1);
+    return rows[0] ?? null;
+  },
+);

@@ -1,15 +1,17 @@
+import { cache } from "react";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { cities, type City } from "@/db/schema";
 
-/** Enabled cities, in display order — what the city selector shows. */
-export async function getEnabledCities(): Promise<City[]> {
+/** Enabled cities, in display order — what the city selector shows.
+ * cache(): layout, pages and generateMetadata all call this per request. */
+export const getEnabledCities = cache(async (): Promise<City[]> => {
   return db
     .select()
     .from(cities)
     .where(eq(cities.enabled, true))
     .orderBy(asc(cities.displayOrder), asc(cities.name));
-}
+});
 
 /** All cities including disabled — for the admin page. */
 export async function getAllCities(): Promise<City[]> {
