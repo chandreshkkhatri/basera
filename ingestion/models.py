@@ -11,6 +11,7 @@ from pydantic import BaseModel, field_validator
 
 Gender = Literal["male", "female", "family", "bachelor", "any"]
 Furnishing = Literal["fully furnished", "semi furnished", "unfurnished"]
+Intent = Literal["offer", "seek", "not_rental"]
 
 
 @dataclass
@@ -37,6 +38,9 @@ class ExtractedListing(BaseModel):
     do not reword.
     """
 
+    # Intent rides along in the same tool call, so one LLM request both
+    # classifies and extracts (the old flow paid a separate classify call).
+    intent: Intent = "offer"
     location: Optional[str] = None
     city: Optional[str] = None
     rent: Optional[float] = None
@@ -44,6 +48,12 @@ class ExtractedListing(BaseModel):
     gender_preference: Gender = "any"
     furnishing_status: Furnishing = "unfurnished"
     additional_details: Optional[str] = None
+
+    @field_validator("intent", mode="before")
+    @classmethod
+    def _default_intent(cls, v: object) -> str:
+        allowed = {"offer", "seek", "not_rental"}
+        return v if v in allowed else "offer"
 
     @field_validator("rent", mode="before")
     @classmethod
@@ -73,11 +83,21 @@ class ExtractedListing(BaseModel):
 EXTRACTION_TOOL_NAME = "extract_property_details"
 EXTRACTION_TOOL_DESCRIPTION = (
     "Extract specific locality/neighborhood and rent details from a "
-    "residential rental listing post."
+    "residential rental listing post, and classify the post's intent."
 )
 EXTRACTION_PARAMETERS: dict = {
     "type": "object",
     "properties": {
+        "intent": {
+            "type": "string",
+            "enum": ["offer", "seek", "not_rental"],
+            "description": "'offer' if a flat/room/house is being OFFERED for "
+            "rent (by an owner, landlord, broker, or someone with a place who "
+            "wants a flatmate to join THEIR home). 'seek' if the poster is "
+            "looking FOR a place to rent (e.g. 'looking for a 2BHK', 'need a "
+            "flat in Baner'). 'not_rental' if the post is not about renting "
+            "residential property (for sale, services, jobs, unrelated).",
+        },
         "location": {
             "type": "string",
             "description": "The specific area/locality/neighborhood mentioned "
@@ -116,6 +136,7 @@ EXTRACTION_PARAMETERS: dict = {
         },
     },
     "required": [
+        "intent",
         "location",
         "city",
         "rent",

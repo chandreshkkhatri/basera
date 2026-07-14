@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import { getListings } from "@/db/queries/listings";
 import { getEnabledCities, resolveCity } from "@/db/queries/cities";
 import { parseFilters } from "@/lib/filters";
@@ -7,6 +8,32 @@ import { ListingGrid } from "@/components/listing-grid";
 import { ListingList } from "@/components/listing-list";
 import { Pagination } from "@/components/pagination";
 import { EmptyState } from "@/components/empty-state";
+
+export async function generateMetadata({
+  searchParams,
+}: PageProps<"/">): Promise<Metadata> {
+  const params = await searchParams;
+  // Tolerate a down DB: fall back to the layout's default metadata.
+  const enabled = await getEnabledCities().catch(() => []);
+  const city = await resolveCity(
+    typeof params.city === "string" ? params.city : undefined,
+    enabled,
+  );
+  if (!city) return {};
+  // The root page shares its segment with the root layout, so the layout's
+  // title template ("%s | Basera") does NOT apply here — suffix manually.
+  const title = `Rentals in ${city.name} | Basera`;
+  const description =
+    `Rooms, flats and PGs for rent in ${city.name}, aggregated from local ` +
+    `Facebook groups. Filter by rent, BHK and furnishing, and sort by ` +
+    `distance from your point.`;
+  return {
+    title,
+    description,
+    alternates: { canonical: `/?city=${city.slug}` },
+    openGraph: { title, description, url: `/?city=${city.slug}` },
+  };
+}
 
 export default async function FeedPage({ searchParams }: PageProps<"/">) {
   const params = await searchParams;

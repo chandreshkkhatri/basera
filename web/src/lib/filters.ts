@@ -66,6 +66,15 @@ const numeric = z
   });
 
 export const filtersSchema = z.object({
+  // Free-text locality search ("Kharadi", "near EON IT park"). Trimmed and
+  // length-capped; empty becomes undefined so no predicate is added.
+  q: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const s = (v ?? "").trim().slice(0, 80);
+      return s || undefined;
+    }),
   rentMin: numeric,
   rentMax: numeric,
   bhk: csv(BHK_BUCKETS),
@@ -90,6 +99,7 @@ function firstValue(v: string | string[] | undefined): string | undefined {
 export function parseFilters(params: RawParams): Filters {
   const flat: Record<string, string | undefined> = {};
   for (const key of [
+    "q",
     "rentMin",
     "rentMax",
     "bhk",

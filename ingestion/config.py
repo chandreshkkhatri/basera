@@ -91,6 +91,14 @@ class Settings(BaseSettings):
     telegram_send_timeout_s: float = 10.0
     alert_stale_run_hours: float = 2.0    # watchdog: no successful run in window
     alert_stale_posts_hours: float = 12.0  # watchdog: no run with new posts in window
+    # Listings older than this are flipped active -> stale by the watchdog, so
+    # the feed doesn't accumulate long-dead posts. 0 disables the sweep.
+    listing_stale_days: int = 45
+    # Near-duplicate collapse: a new post whose text is >= this trigram
+    # similarity to a same-group listing from the last N days refreshes that
+    # listing instead of inserting a duplicate. 0 disables.
+    dedup_similarity: float = 0.9
+    dedup_window_days: int = 14
 
     def enabled_alert_categories(self) -> set[str] | None:
         """None means every category; an empty set disables delivery entirely."""

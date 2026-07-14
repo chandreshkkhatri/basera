@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { and, desc, eq, gte, lte, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { listings, type Listing } from "@/db/schema";
@@ -34,6 +35,19 @@ function buildWhere(f: Filters, cityId: number): SQL {
     eq(listings.isOffer, true),
     eq(listings.status, "active"),
   ];
+
+  if (f.q) {
+    // Locality search over the extracted location and the raw post text.
+    // Escape LIKE metacharacters so "100%_furnished" searches literally.
+    const escaped = f.q.replace(/[\\%_]/g, (m) => `\\${m}`);
+    const pattern = `%${escaped}%`;
+    conds.push(
+      or(
+        sql`${listings.location} ilike ${pattern}`,
+        sql`${listings.originalText} ilike ${pattern}`,
+      ),
+    );
+  }
 
   // Rent filters exclude rows without a rent value only when a bound is set.
   if (f.rentMin != null) conds.push(gte(listings.rent, f.rentMin));
@@ -190,11 +204,14 @@ export async function getMapListings(
   return { rows, total: countResult[0]?.count ?? 0 };
 }
 
-export async function getListingById(id: number): Promise<Listing | null> {
-  const rows = await db
-    .select()
-    .from(listings)
-    .where(eq(listings.id, id))
-    .limit(1);
-  return rows[0] ?? null;
-}
+/** cache(): the detail page and its generateMetadata both fetch the row. */
+export const getListingById = cache(
+  async (id: number): Promise<Listing | null> => {
+    const rows = await db
+      .select()
+      .from(listings)
+      .where(eq(listings.id, id))
+      .limit(1);
+    return rows[0] ?? null;
+  },
+);

@@ -12,3 +12,6 @@ googlemaps>=4.10.0
 # Facebook scraping
 playwright>=1.40.0
 requests>=2.31.0
+
+# Tests (unit tests only import pure helpers — no browser/DB needed)
+pytest>=8.0

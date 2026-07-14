@@ -129,7 +129,7 @@ def _cmd_run(args, settings) -> int:
         return rc
 
     alerter = Alerter(settings, repo)
-    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo, alerter)
+    pipeline = Pipeline(LLMClient(settings), Geocoder(settings, repo), repo, alerter)
     limit = args.limit or args.posts
 
     # Which groups to scrape: an explicit --group, else all enabled groups whose
@@ -196,7 +196,7 @@ def _cmd_analyze(args, settings) -> int:
         )
         for r in rows
     ]
-    pipeline = Pipeline(LLMClient(settings), Geocoder(settings), repo, alerter)
+    pipeline = Pipeline(LLMClient(settings), Geocoder(settings, repo), repo, alerter)
     workers = args.workers or settings.analyze_workers
     log.info("Analyzing %d raw posts with %d workers", len(posts), workers)
     stats = pipeline.process_many(posts, workers)
@@ -316,6 +316,16 @@ def _cmd_watchdog(settings) -> int:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         return (now - ts).total_seconds() / 3600
+
+    # Freshness sweep: retire long-dead posts so the feed doesn't accumulate
+    # listings that are almost certainly gone. Re-scraped posts resurrect.
+    if settings.listing_stale_days > 0:
+        flipped = repo.mark_stale_listings(settings.listing_stale_days)
+        if flipped:
+            log.info(
+                "Marked %d listing(s) stale (older than %dd).",
+                flipped, settings.listing_stale_days,
+            )
 
     success_age = _age_hours(health["last_success_at"])
     yield_age = _age_hours(health["last_yield_at"])

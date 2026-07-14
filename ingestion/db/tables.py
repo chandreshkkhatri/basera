@@ -109,6 +109,26 @@ scrape_runs = Table(
     Column("error", Text),
 )
 
+alert_categories = Table(
+    "alert_categories",
+    metadata,
+    # Admin-managed delivery toggles; absent row = enabled.
+    Column("category", Text, primary_key=True),
+    Column("enabled", Boolean, nullable=False),
+    Column("updated_at", TIMESTAMP(timezone=True)),
+)
+
+geocode_cache = Table(
+    "geocode_cache",
+    metadata,
+    # Normalized lookup string: lowercased "location, city".
+    Column("query", Text, primary_key=True),
+    # NULL coordinates = geocoder definitively found nothing (negative cache).
+    Column("latitude", Float),
+    Column("longitude", Float),
+    Column("created_at", TIMESTAMP(timezone=True)),
+)
+
 alerts = Table(
     "alerts",
     metadata,
@@ -134,5 +154,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "listings": {c.name for c in listings.columns},
     "raw_posts": {c.name for c in raw_posts.columns},
     "scrape_runs": {c.name for c in scrape_runs.columns},
+    "geocode_cache": {c.name for c in geocode_cache.columns},
+    "alert_categories": {c.name for c in alert_categories.columns},
     "alerts": {c.name for c in alerts.columns},
 }

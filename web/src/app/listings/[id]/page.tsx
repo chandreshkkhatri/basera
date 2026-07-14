@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ArrowLeft, MapPin, TriangleAlert } from "lucide-react";
 import { getListingById } from "@/db/queries/listings";
@@ -14,6 +15,41 @@ import { furnishingLabel, genderLabel } from "@/lib/normalize";
 
 function isUrl(s: string | null): boolean {
   return !!s && /^https?:\/\//.test(s);
+}
+
+export async function generateMetadata({
+  params,
+}: PageProps<"/listings/[id]">): Promise<Metadata> {
+  const { id } = await params;
+  const numId = Number(id);
+  if (!Number.isInteger(numId)) return {};
+  // getListingById is cache()d — the page render reuses this row.
+  const listing = await getListingById(numId).catch(() => null);
+  if (!listing) return {};
+
+  const place =
+    [listing.location, listing.city].filter(Boolean).join(", ") || "India";
+  const title = [
+    formatRent(listing.rent),
+    listing.bhk,
+    `in ${place}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const description = listing.originalText
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+
+  return {
+    title,
+    description,
+    alternates: { canonical: `/listings/${listing.id}` },
+    openGraph: { title, description, url: `/listings/${listing.id}` },
+    // Long-dead or admin-hidden posts shouldn't be indexed (they still render
+    // with a warning banner for people holding old links).
+    robots: listing.status === "active" ? undefined : { index: false },
+  };
 }
 
 export default async function ListingDetailPage({

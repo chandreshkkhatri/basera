@@ -106,8 +106,16 @@ def reconstruct_post_url(group: Optional[str], message_id: str) -> Optional[str]
 
 
 def parse_facebook_time(time_text: str) -> datetime:
+    """Resolve Facebook's relative/absolute post times to aware UTC datetimes.
+
+    Naive local datetimes must never leave this function: they get stored into
+    a timestamptz as if they were UTC, shifting every post ~5.5h into the
+    future (IST). Absolute dates carry no year, so strptime would default to
+    1900 — we graft on the current year and step back one if that lands in the
+    future (a December post scraped in January).
+    """
+    now = datetime.now(timezone.utc)
     try:
-        now = datetime.now()
         t = time_text.lower()
         if "min" in t:
             return now - timedelta(minutes=int(re.search(r"(\d+)", t).group(1)))
@@ -118,11 +126,17 @@ def parse_facebook_time(time_text: str) -> datetime:
         if "day" in t:
             return now - timedelta(days=int(re.search(r"(\d+)", t).group(1)))
         try:
-            return datetime.strptime(t, "%B %d at %I:%M %p")
+            # Parse with the year embedded: Facebook omits it, and yearless
+            # strptime defaults to 1900 (and changes behavior in Python 3.15).
+            parsed = datetime.strptime(f"{now.year} {t}", "%Y %B %d at %I:%M %p")
+            parsed = parsed.replace(tzinfo=timezone.utc)
+            if parsed > now + timedelta(days=1):
+                parsed = parsed.replace(year=now.year - 1)
+            return min(parsed, now)
         except ValueError:
             return now
     except Exception:  # noqa: BLE001
-        return datetime.now()
+        return now
 
 
 class GroupLock:
@@ -500,7 +514,7 @@ class FacebookSource:
             if not post_text:
                 return None
 
-            timestamp = datetime.now()
+            timestamp = datetime.now(timezone.utc)
             try:
                 for selector in TIME_SELECTORS:
                     tl = post.locator(selector)

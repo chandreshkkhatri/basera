@@ -139,6 +139,16 @@ export const listings = pgTable(
     index("listings_city_id_idx").on(t.cityId),
     index("listings_rent_idx").on(t.rent),
     index("listings_lat_lon_idx").on(t.latitude, t.longitude),
+    // trigram indexes accelerate the locality search's ILIKE '%...%'
+    // (pg_trgm installed in migration 0004)
+    index("listings_location_trgm_idx").using(
+      "gin",
+      sql`${t.location} gin_trgm_ops`,
+    ),
+    index("listings_original_text_trgm_idx").using(
+      "gin",
+      sql`${t.originalText} gin_trgm_ops`,
+    ),
     // covers the default feed predicate + ordering
     index("listings_feed_idx").on(
       t.status,
@@ -264,6 +274,37 @@ export const alerts = pgTable(
     index("alerts_created_idx").on(t.createdAt.desc()),
   ],
 );
+
+/**
+ * Admin-managed delivery toggles for the ingestion engine's Telegram alerts
+ * (see ingestion/alerts.py). Rows exist only for categories an admin has
+ * touched; absent = enabled. Alerts remain admin/operator-facing — this is a
+ * runtime override of the coarse ALERT_CATEGORIES env setting.
+ */
+export const alertCategories = pgTable("alert_categories", {
+  category: text("category").primaryKey(),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/**
+ * Geocoding results cache, written and read by the Python ingestion engine.
+ * The distinct locality space per city is tiny, so caching cuts the Google
+ * Maps bill to near zero after warm-up. A row with NULL coordinates records
+ * "geocoder found nothing" (only definite no-results are cached — API errors
+ * are not).
+ */
+export const geocodeCache = pgTable("geocode_cache", {
+  // Normalized lookup string: lowercased "location, city".
+  query: text("query").primaryKey(),
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export type Listing = typeof listings.$inferSelect;
 export type NewListing = typeof listings.$inferInsert;
