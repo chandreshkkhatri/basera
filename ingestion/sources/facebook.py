@@ -363,23 +363,27 @@ class FacebookSource:
         s = self.settings
         self.playwright = sync_playwright().start()
         user_data = s.chrome_user_data_dir or str(s.state_path / "profiles" / "facebook")
-        launch_options = {
-            "headless": s.headless,
-            "ignore_default_args": ["--no-sandbox"],
-        }
+        launch_options: dict = {"headless": s.headless}
+        args = ["--disable-blink-features=AutomationControlled"]
+        if s.browser_no_sandbox:
+            # No Chromium sandbox on servers/containers; avoid /dev/shm too.
+            args += ["--no-sandbox", "--disable-dev-shm-usage"]
+        else:
+            # Desktop: keep the sandbox (strip Playwright's default --no-sandbox).
+            launch_options["ignore_default_args"] = ["--no-sandbox"]
         if s.browser_channel:
             launch_options["channel"] = s.browser_channel
         try:
             self.context = self.playwright.chromium.launch_persistent_context(
                 user_data_dir=user_data,
-                args=["--disable-blink-features=AutomationControlled"],
+                args=args,
                 **launch_options,
             )
             self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
         except Exception as e:  # noqa: BLE001
             channel = s.browser_channel or "bundled Chromium"
             log.warning("Profile launch failed (%s); plain %s", e, channel)
-            browser = self.playwright.chromium.launch(**launch_options)
+            browser = self.playwright.chromium.launch(args=args, **launch_options)
             self.context = browser.new_context()
             self.page = self.context.new_page()
 

@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     chrome_user_data_dir: str | None = None
     browser_channel: str | None = "chrome"
     headless: bool = False
+    # Servers/containers usually can't run the Chromium sandbox (launch crashes
+    # with "Target page/context/browser has been closed"). Set true on the VM;
+    # adds --no-sandbox + --disable-dev-shm-usage. Keep false on desktops.
+    browser_no_sandbox: bool = False
 
     # --- State / filesystem ---------------------------------------------
     state_dir: Path = Path("ingestion/state")
