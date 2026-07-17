@@ -95,9 +95,12 @@ class Settings(BaseSettings):
     telegram_send_timeout_s: float = 10.0
     alert_stale_run_hours: float = 2.0    # watchdog: no successful run in window
     alert_stale_posts_hours: float = 12.0  # watchdog: no run with new posts in window
-    # Listings older than this are flipped active -> stale by the watchdog, so
-    # the feed doesn't accumulate long-dead posts. 0 disables the sweep.
-    listing_stale_days: int = 45
+    # Tiered aging, run daily by the `archive` command: posts older than
+    # ARCHIVE_AFTER_DAYS drop out of the feed (active -> archived); posts older
+    # than MOVE_AFTER_DAYS are physically moved to listings_archive (cold
+    # storage). 0 disables that tier.
+    listing_archive_after_days: int = 7
+    listing_move_after_days: int = 14
     # Near-duplicate collapse: a new post whose text is >= this trigram
     # similarity to a same-group listing from the last N days refreshes that
     # listing instead of inserting a duplicate. 0 disables.

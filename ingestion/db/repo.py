@@ -16,6 +16,7 @@ from sqlalchemy import (
     inspect,
     or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.postgresql import insert
@@ -387,10 +388,10 @@ class Repo:
             "is_rental": is_rental,
             "is_offer": is_offer,
         }
-        # Seeing the post again proves it's alive: resurrect stale -> active.
-        # 'hidden' (an admin action) survives re-scrapes.
+        # Seeing the post again proves it's alive: resurrect archived/stale ->
+        # active. 'hidden' (an admin action) survives re-scrapes.
         resurrect = case(
-            (tables.listings.c.status == "stale", "active"),
+            (tables.listings.c.status.in_(["archived", "stale"]), "active"),
             else_=tables.listings.c.status,
         )
 
@@ -530,20 +531,52 @@ class Repo:
                 select(func.count()).select_from(tables.listings)
             ).scalar_one()
 
-    def mark_stale_listings(self, older_than_days: int) -> int:
-        """Flip long-dead posts active -> stale so the feed stays fresh.
-        Only touches 'active' (never 'hidden'). The inverse transition lives in
-        upsert_listing: a re-scraped post resurrects stale -> active.
-        Returns the number of rows flipped."""
+    def mark_archived(self, older_than_days: int) -> int:
+        """Flip active listings older than N days to 'archived' (out of the
+        feed). Only touches 'active'; a re-scrape resurrects archived -> active
+        via upsert_listing. Returns the number of rows flipped."""
         c = tables.listings.c
         cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
         stmt = (
             update(tables.listings)
             .where(c.status == "active", c.posted_at < cutoff)
-            .values(status="stale")
+            .values(status="archived")
         )
         with self.engine.begin() as conn:
             return conn.execute(stmt).rowcount or 0
+
+    def move_to_archive(self, older_than_days: int) -> int:
+        """Move listings older than N days (except admin-'hidden') into
+        listings_archive cold storage, then delete them from listings, in one
+        transaction. Copies an explicit column list and aborts if the archive
+        table is missing any listings column. Idempotent — a row already in
+        archive is left as-is (ON CONFLICT DO NOTHING) but still removed from
+        the live table. Returns the number of rows removed from listings."""
+        inspector = inspect(self.engine)
+        src_cols = [col["name"] for col in inspector.get_columns("listings")]
+        arc_cols = {col["name"] for col in inspector.get_columns("listings_archive")}
+        missing = [col for col in src_cols if col not in arc_cols]
+        if missing:
+            raise SchemaError(
+                f"listings_archive is missing columns {missing}; "
+                f"run the web app's Drizzle migrations."
+            )
+        collist = ", ".join(f'"{c}"' for c in src_cols)
+        where = "posted_at < now() - make_interval(days => :d) and status <> 'hidden'"
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    f"insert into listings_archive ({collist}) "
+                    f"select {collist} from listings where {where} "
+                    f"on conflict (source, source_id) do nothing"
+                ),
+                {"d": older_than_days},
+            )
+            deleted = conn.execute(
+                text(f"delete from listings where {where}"),
+                {"d": older_than_days},
+            ).rowcount
+        return deleted or 0
 
     def disabled_alert_categories(self) -> set[str]:
         """Categories an admin has toggled off in /admin. Callers must treat a

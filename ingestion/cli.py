@@ -5,6 +5,7 @@
     python -m ingestion backfill [--results-dir scraper/results]
     python -m ingestion groups list | add <url> --city <name> | remove <url>
     python -m ingestion alerts test | flush | list [--limit N]
+    python -m ingestion archive
     python -m ingestion watchdog
     python -m ingestion check
 
@@ -73,6 +74,12 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "watchdog",
         help="stale-data checks + deliver queued alerts (run periodically)",
+    )
+
+    sub.add_parser(
+        "archive",
+        help="age posts out of the feed (archived) + move old ones to cold "
+        "storage (run daily)",
     )
 
     sub.add_parser("check", help="validate settings, DB connectivity and schema")
@@ -296,6 +303,28 @@ def _cmd_alerts(args, settings) -> int:
     return 0
 
 
+def _cmd_archive(settings) -> int:
+    """Daily tiered aging: active -> archived at N days (out of feed), then
+    move to cold storage at M days. DB-only; safe to run anytime."""
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
+
+    if settings.listing_archive_after_days > 0:
+        archived = repo.mark_archived(settings.listing_archive_after_days)
+        log.info(
+            "Archived %d listing(s) older than %dd (removed from feed).",
+            archived, settings.listing_archive_after_days,
+        )
+    if settings.listing_move_after_days > 0:
+        moved = repo.move_to_archive(settings.listing_move_after_days)
+        log.info(
+            "Moved %d listing(s) older than %dd to cold storage.",
+            moved, settings.listing_move_after_days,
+        )
+    return EXIT_OK
+
+
 def _cmd_watchdog(settings) -> int:
     """Stale-data checks + outbox flush. Cheap; run every cycle / via cron."""
     from datetime import datetime, timezone
@@ -316,16 +345,6 @@ def _cmd_watchdog(settings) -> int:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         return (now - ts).total_seconds() / 3600
-
-    # Freshness sweep: retire long-dead posts so the feed doesn't accumulate
-    # listings that are almost certainly gone. Re-scraped posts resurrect.
-    if settings.listing_stale_days > 0:
-        flipped = repo.mark_stale_listings(settings.listing_stale_days)
-        if flipped:
-            log.info(
-                "Marked %d listing(s) stale (older than %dd).",
-                flipped, settings.listing_stale_days,
-            )
 
     success_age = _age_hours(health["last_success_at"])
     yield_age = _age_hours(health["last_yield_at"])
@@ -400,6 +419,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_groups(args, settings)
     if args.command == "alerts":
         return _cmd_alerts(args, settings)
+    if args.command == "archive":
+        return _cmd_archive(settings)
     if args.command == "watchdog":
         return _cmd_watchdog(settings)
     if args.command == "check":

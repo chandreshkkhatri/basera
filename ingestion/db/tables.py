@@ -77,6 +77,37 @@ listings = Table(
     Column("status", Text, nullable=False),
 )
 
+# Cold storage: same columns as listings (+ archived_at), no FK/feed indexes.
+# The `archive` command copies rows here from listings by explicit column list.
+listings_archive = Table(
+    "listings_archive",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("source", Text, nullable=False),
+    Column("source_id", Text, nullable=False),
+    Column("source_url", Text),
+    Column("source_group", Text),
+    Column("posted_at", TIMESTAMP(timezone=True), nullable=False),
+    Column("scraped_at", TIMESTAMP(timezone=True), nullable=False),
+    Column("location", Text),
+    Column("city", Text),
+    Column("city_id", BigInteger),
+    Column("rent", Integer),
+    Column("bhk", Text),
+    Column("gender_preference", Text, nullable=False),
+    Column("furnishing_status", Text),
+    Column("additional_details", Text),
+    Column("latitude", Float),
+    Column("longitude", Float),
+    Column("original_text", Text, nullable=False),
+    Column("contact_name", Text),
+    Column("contact_url", Text),
+    Column("is_rental", Boolean, nullable=False),
+    Column("is_offer", Boolean, nullable=False),
+    Column("status", Text, nullable=False),
+    Column("archived_at", TIMESTAMP(timezone=True)),
+)
+
 raw_posts = Table(
     "raw_posts",
     metadata,
@@ -152,6 +183,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "cities": {c.name for c in cities.columns},
     "groups": {c.name for c in groups.columns},
     "listings": {c.name for c in listings.columns},
+    "listings_archive": {c.name for c in listings_archive.columns},
     "raw_posts": {c.name for c in raw_posts.columns},
     "scrape_runs": {c.name for c in scrape_runs.columns},
     "geocode_cache": {c.name for c in geocode_cache.columns},

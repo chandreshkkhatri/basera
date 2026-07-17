@@ -50,6 +50,13 @@
       "when": 1783942960155,
       "tag": "0006_solid_ultimates",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784260662457,
+      "tag": "0007_great_salo",
+      "breakpoints": true
     }
   ]
 }

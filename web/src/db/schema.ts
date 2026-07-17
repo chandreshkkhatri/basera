@@ -30,7 +30,10 @@ import {
 export type Source = "telegram" | "whatsapp" | "facebook";
 export type GenderPreference = "male" | "female" | "family" | "bachelor" | "any";
 export type FurnishingStatus = "fully furnished" | "semi furnished" | "unfurnished";
-export type ListingStatus = "active" | "stale" | "hidden";
+// active: in the feed. archived: aged out (7d+), hidden from the feed but still
+// reachable by direct link. stale: legacy (superseded by archived; kept valid).
+// hidden: admin-hidden. 14d+ rows are physically moved to listings_archive.
+export type ListingStatus = "active" | "archived" | "stale" | "hidden";
 export type RunStatus =
   | "running"
   | "success"
@@ -162,8 +165,52 @@ export const listings = pgTable(
     ),
     check(
       "listings_status_chk",
-      sql`${t.status} in ('active','stale','hidden')`,
+      sql`${t.status} in ('active','archived','stale','hidden')`,
     ),
+  ],
+);
+
+/**
+ * Cold storage for listings 14+ days old, moved out of `listings` by the daily
+ * `ingestion archive` job so the live table stays small. Mirrors every
+ * `listings` column (plus archived_at); the move copies an explicit column
+ * list and aborts if any `listings` column is missing here. Intentionally
+ * minimal: no FK to cities (cold storage must not constrain the live
+ * registry), no feed/search indexes, no status/source CHECKs.
+ */
+export const listingsArchive = pgTable(
+  "listings_archive",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    source: text("source").$type<Source>().notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceUrl: text("source_url"),
+    sourceGroup: text("source_group"),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull(),
+    scrapedAt: timestamp("scraped_at", { withTimezone: true }).notNull(),
+    location: text("location"),
+    city: text("city"),
+    cityId: bigint("city_id", { mode: "number" }),
+    rent: integer("rent"),
+    bhk: text("bhk"),
+    genderPreference: text("gender_preference").$type<GenderPreference>().notNull(),
+    furnishingStatus: text("furnishing_status").$type<FurnishingStatus>(),
+    additionalDetails: text("additional_details"),
+    latitude: doublePrecision("latitude"),
+    longitude: doublePrecision("longitude"),
+    originalText: text("original_text").notNull(),
+    contactName: text("contact_name"),
+    contactUrl: text("contact_url"),
+    isRental: boolean("is_rental").notNull(),
+    isOffer: boolean("is_offer").notNull(),
+    status: text("status").$type<ListingStatus>().notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // Needed for the move's ON CONFLICT DO NOTHING (idempotent re-runs).
+    uniqueIndex("listings_archive_source_source_id_uq").on(t.source, t.sourceId),
   ],
 );
 
@@ -307,6 +354,7 @@ export const geocodeCache = pgTable("geocode_cache", {
 });
 
 export type Listing = typeof listings.$inferSelect;
+export type ArchivedListing = typeof listingsArchive.$inferSelect;
 export type NewListing = typeof listings.$inferInsert;
 export type ScrapeRun = typeof scrapeRuns.$inferSelect;
 export type City = typeof cities.$inferSelect;
