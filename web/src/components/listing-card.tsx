@@ -55,6 +55,7 @@ export function ListingCard({ listing }: { listing: ListingRow }) {
           <DistanceChip
             lat={listing.latitude}
             lng={listing.longitude}
+            precision={listing.geoPrecision}
             distanceKm={listing.distanceKm}
           />
         </div>

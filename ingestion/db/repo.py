@@ -353,6 +353,7 @@ class Repo:
         is_rental: bool = True,
         is_offer: bool = True,
         *,
+        geo_precision: Optional[str] = None,
         dedup_similarity: float = 0.9,
         dedup_window_days: int = 14,
     ) -> None:
@@ -382,6 +383,7 @@ class Repo:
             "additional_details": extracted.additional_details,
             "latitude": lat,
             "longitude": lon,
+            "geo_precision": geo_precision,
             "original_text": post.text,
             "contact_name": post.author_name,
             "contact_url": post.author_url or post.source_url,
@@ -461,20 +463,24 @@ class Repo:
             conn.execute(stmt)
 
     # -- geocode cache ---------------------------------------------------
-    # A hit returns (lat, lng) where both-None means "cached no-result";
-    # a miss returns None (not cached yet).
+    # A hit returns (lat, lng, precision) where lat/lng both-None means
+    # "cached no-result"; a miss returns None (not cached yet).
 
     def geocode_cache_get(
         self, query: str
-    ) -> Optional[tuple[Optional[float], Optional[float]]]:
+    ) -> Optional[tuple[Optional[float], Optional[float], Optional[str]]]:
         c = tables.geocode_cache.c
-        stmt = select(c.latitude, c.longitude).where(c.query == query)
+        stmt = select(c.latitude, c.longitude, c.precision).where(c.query == query)
         with self.engine.connect() as conn:
             row = conn.execute(stmt).first()
-        return (row.latitude, row.longitude) if row is not None else None
+        return (row.latitude, row.longitude, row.precision) if row is not None else None
 
     def geocode_cache_put(
-        self, query: str, lat: Optional[float], lng: Optional[float]
+        self,
+        query: str,
+        lat: Optional[float],
+        lng: Optional[float],
+        precision: Optional[str] = None,
     ) -> None:
         stmt = (
             insert(tables.geocode_cache)
@@ -482,6 +488,7 @@ class Repo:
                 query=query,
                 latitude=lat,
                 longitude=lng,
+                precision=precision,
                 created_at=datetime.now(timezone.utc),
             )
             .on_conflict_do_nothing(index_elements=["query"])

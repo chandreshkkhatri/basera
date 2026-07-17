@@ -125,6 +125,10 @@ export const listings = pgTable(
     additionalDetails: text("additional_details"),
     latitude: doublePrecision("latitude"),
     longitude: doublePrecision("longitude"),
+    // Geocoder confidence for the coordinates (Google location_type: ROOFTOP |
+    // RANGE_INTERPOLATED | GEOMETRIC_CENTER | APPROXIMATE). NULL = unknown;
+    // the UI treats anything below ROOFTOP/RANGE_INTERPOLATED as "~ approx".
+    geoPrecision: text("geo_precision"),
     originalText: text("original_text").notNull(),
     contactName: text("contact_name"),
     contactUrl: text("contact_url"),
@@ -198,6 +202,7 @@ export const listingsArchive = pgTable(
     additionalDetails: text("additional_details"),
     latitude: doublePrecision("latitude"),
     longitude: doublePrecision("longitude"),
+    geoPrecision: text("geo_precision"),
     originalText: text("original_text").notNull(),
     contactName: text("contact_name"),
     contactUrl: text("contact_url"),
@@ -348,6 +353,8 @@ export const geocodeCache = pgTable("geocode_cache", {
   query: text("query").primaryKey(),
   latitude: doublePrecision("latitude"),
   longitude: doublePrecision("longitude"),
+  // Google location_type of the cached result (see listings.geo_precision).
+  precision: text("precision"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

@@ -70,6 +70,27 @@ try {
   const triggerText = await page.getByRole("button", { name: /my location|koregaon|my point/i }).count();
   check("saved POI reflected in trigger", triggerText > 0);
 
+  // --- Stale-POI regression: moving the point must update URL + distances ---
+  await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(800); // let the default-sort effect write poiLat
+  const latBefore = new URL(page.url()).searchParams.get("poiLat");
+  check("distance sort defaulted with poiLat in URL", !!latBefore, `poiLat=${latBefore}`);
+  await page.getByRole("button", { name: /my location|koregaon|my point/i }).first().click();
+  const dialog2 = page.getByRole("dialog");
+  await dialog2.getByPlaceholder(/search a locality/i).fill("Hinjawadi Pune");
+  const result2 = dialog2.locator("ul li button").first();
+  await result2.waitFor({ state: "visible", timeout: 8000 });
+  await result2.click();
+  await page.waitForTimeout(600);
+  await dialog2.getByRole("button", { name: /save point/i }).click();
+  await page.waitForTimeout(1200); // sync effect updates the URL
+  const latAfter = new URL(page.url()).searchParams.get("poiLat");
+  check(
+    "moving the point updates URL poiLat (stale-distance fix)",
+    !!latAfter && latAfter !== latBefore,
+    `${latBefore} -> ${latAfter}`,
+  );
+
   // --- Detail page ---
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
   const firstHref = await page.locator("a[href^='/listings/']").first().getAttribute("href");

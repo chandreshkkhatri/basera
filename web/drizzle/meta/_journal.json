@@ -57,6 +57,13 @@
       "when": 1784260662457,
       "tag": "0007_great_salo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784261969821,
+      "tag": "0008_shiny_komodo",
+      "breakpoints": true
     }
   ]
 }

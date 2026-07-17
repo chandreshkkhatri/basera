@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# (lat, lng, precision) — precision is Google's location_type (ROOFTOP |
+# RANGE_INTERPOLATED | GEOMETRIC_CENTER | APPROXIMATE), or None if unknown.
+GeocodeResult = Tuple[float, float, Optional[str]]
+
 
 def _cache_key(location: str, city: Optional[str]) -> str:
     full = location
@@ -33,11 +37,11 @@ class Geocoder:
 
     def geocode(
         self, location: str, city: Optional[str] = None
-    ) -> Optional[Tuple[float, float]]:
-        """Return (lat, lon) for a location string, or None. Falls back from
-        'location' to 'location, city' (ported from telegram_bot.py:294-309).
-        Definite no-results are cached too (negative cache); API errors are
-        never cached."""
+    ) -> Optional[GeocodeResult]:
+        """Return (lat, lon, precision) for a location string, or None. Falls
+        back from 'location' to 'location, city' (ported from
+        telegram_bot.py:294-309). Definite no-results are cached too (negative
+        cache); API errors are never cached."""
         key = _cache_key(location, city)
         if self._repo is not None:
             try:
@@ -46,8 +50,10 @@ class Geocoder:
                 log.debug("geocode cache read failed: %s", e)
                 cached = None
             if cached is not None:
-                lat, lng = cached
-                return (lat, lng) if lat is not None and lng is not None else None
+                lat, lng, precision = cached
+                if lat is None or lng is None:
+                    return None
+                return (lat, lng, precision)
 
         try:
             full = location
@@ -58,15 +64,20 @@ class Geocoder:
             log.warning("Geocoding failed for '%s': %s", location, e)
             return None
 
-        coords: Optional[Tuple[float, float]] = None
+        coords: Optional[GeocodeResult] = None
         if result:
-            loc = result[0]["geometry"]["location"]
-            coords = (loc["lat"], loc["lng"])
+            geometry = result[0].get("geometry", {})
+            loc = geometry.get("location", {})
+            if "lat" in loc and "lng" in loc:
+                coords = (loc["lat"], loc["lng"], geometry.get("location_type"))
 
         if self._repo is not None:
             try:
                 self._repo.geocode_cache_put(
-                    key, coords[0] if coords else None, coords[1] if coords else None
+                    key,
+                    coords[0] if coords else None,
+                    coords[1] if coords else None,
+                    coords[2] if coords else None,
                 )
             except Exception as e:  # noqa: BLE001
                 log.debug("geocode cache write failed: %s", e)

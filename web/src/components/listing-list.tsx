@@ -112,6 +112,7 @@ function ListingTableRow({ listing }: { listing: ListingRow }) {
         <DistanceChip
           lat={listing.latitude}
           lng={listing.longitude}
+          precision={listing.geoPrecision}
           distanceKm={listing.distanceKm}
         />
       </TableCell>
@@ -172,6 +173,7 @@ function ListingRow({ listing }: { listing: ListingRow }) {
           <DistanceChip
             lat={listing.latitude}
             lng={listing.longitude}
+            precision={listing.geoPrecision}
             distanceKm={listing.distanceKm}
           />
           <span className="ml-auto text-xs text-muted-foreground">

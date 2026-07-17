@@ -97,10 +97,10 @@ class Pipeline:
                 self._alert_gave_up(post, "LLM extraction returned no location")
             return False
 
-        lat = lon = None
+        lat = lon = geo_precision = None
         coords = self.geocoder.geocode(extracted.location, extracted.city)
         if coords:
-            lat, lon = coords
+            lat, lon, geo_precision = coords
         else:
             stats.geocode_failed += 1
 
@@ -109,6 +109,7 @@ class Pipeline:
             post, extracted, lat, lon,
             is_rental=True,
             is_offer=True,
+            geo_precision=geo_precision,
             dedup_similarity=settings.dedup_similarity,
             dedup_window_days=settings.dedup_window_days,
         )

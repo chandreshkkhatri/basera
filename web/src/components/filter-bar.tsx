@@ -59,7 +59,7 @@ export function FilterBar() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { poi } = usePoi();
+  const { poi, ready: poiReady } = usePoi();
 
   const get = (k: string) => searchParams.get(k) ?? "";
   const getList = (k: string) =>
@@ -104,18 +104,46 @@ export function FilterBar() {
       }
     });
 
-  // Default the feed to distance sort once the user has a saved point: when a
-  // POI exists and no sort has been chosen yet, apply distance. Picking any
-  // sort (incl. "newest") writes an explicit param, which stops this firing.
+  // Keep the URL's point in lockstep with the user's saved point.
+  // 1. No sort chosen yet + a point exists -> default to distance sort.
+  // 2. URL carries a DIFFERENT point than the saved one (user moved their
+  //    point after sorting) -> update it, else the server sorts and shows
+  //    distances to the stale point.
+  // 3. Point cleared -> drop the params (and a now-impossible distance sort).
   useEffect(() => {
-    if (poi && !searchParams.get("sort") && !searchParams.get("poiLat")) {
+    if (!poiReady) return;
+    const urlLat = searchParams.get("poiLat");
+    const urlLng = searchParams.get("poiLng");
+    if (poi) {
+      if (!searchParams.get("sort") && !urlLat) {
+        commit((q) => {
+          q.set("sort", "distance");
+          q.set("poiLat", String(poi.lat));
+          q.set("poiLng", String(poi.lng));
+        });
+        return;
+      }
+      // Epsilon compare: the params round-trip through strings, and an exact
+      // != would loop the effect against itself.
+      const drifted =
+        urlLat != null &&
+        urlLng != null &&
+        (Math.abs(Number(urlLat) - poi.lat) > 1e-6 ||
+          Math.abs(Number(urlLng) - poi.lng) > 1e-6);
+      if (drifted) {
+        commit((q) => {
+          q.set("poiLat", String(poi.lat));
+          q.set("poiLng", String(poi.lng));
+        });
+      }
+    } else if (urlLat || urlLng) {
       commit((q) => {
-        q.set("sort", "distance");
-        q.set("poiLat", String(poi.lat));
-        q.set("poiLng", String(poi.lng));
+        q.delete("poiLat");
+        q.delete("poiLng");
+        if (q.get("sort") === "distance") q.delete("sort");
       });
     }
-  }, [poi, searchParams, commit]);
+  }, [poi, poiReady, searchParams, commit]);
 
   const activeCount = [
     "q",

@@ -68,6 +68,8 @@ listings = Table(
     Column("additional_details", Text),
     Column("latitude", Float),
     Column("longitude", Float),
+    # Google location_type for the coords; NULL/APPROXIMATE render as "~" in UI.
+    Column("geo_precision", Text),
     Column("original_text", Text, nullable=False),
     Column("contact_name", Text),
     Column("contact_url", Text),
@@ -99,6 +101,7 @@ listings_archive = Table(
     Column("additional_details", Text),
     Column("latitude", Float),
     Column("longitude", Float),
+    Column("geo_precision", Text),
     Column("original_text", Text, nullable=False),
     Column("contact_name", Text),
     Column("contact_url", Text),
@@ -157,6 +160,7 @@ geocode_cache = Table(
     # NULL coordinates = geocoder definitively found nothing (negative cache).
     Column("latitude", Float),
     Column("longitude", Float),
+    Column("precision", Text),
     Column("created_at", TIMESTAMP(timezone=True)),
 )
 

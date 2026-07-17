@@ -122,6 +122,7 @@ export default async function ListingDetailPage({
           <DistanceChip
             lat={listing.latitude}
             lng={listing.longitude}
+            precision={listing.geoPrecision}
             distanceKm={null}
           />
         </div>
