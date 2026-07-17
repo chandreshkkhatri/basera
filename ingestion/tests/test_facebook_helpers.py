@@ -7,6 +7,8 @@ import pytest
 
 from ingestion.sources.facebook import (
     _is_post_href,
+    _looks_like_timestamp_text,
+    _permalinks_in_html,
     generate_post_id,
     normalize_post_url,
     parse_facebook_time,
@@ -130,3 +132,56 @@ class TestReconstructPostUrl:
 )
 def test_is_post_href(href, expected):
     assert _is_post_href(href) is expected
+
+
+class TestPermalinksInHtml:
+    def test_absolute_group_post_link(self):
+        html = '<a href="https://www.facebook.com/groups/punehomes/posts/123456?comment_id=9">2h</a>'
+        assert _permalinks_in_html(html) == [
+            "https://www.facebook.com/groups/punehomes/posts/123456/"
+        ]
+
+    def test_relative_permalink_form(self):
+        html = '<a href="/groups/12345/permalink/67890/">link</a>'
+        assert _permalinks_in_html(html) == [
+            "https://www.facebook.com/groups/12345/permalink/67890"
+        ]
+
+    def test_story_fbid_with_entity_escaped_amp(self):
+        html = "href=\"story.php?story_fbid=111&amp;id=222\""
+        assert _permalinks_in_html(html) == [
+            "https://www.facebook.com/groups/222/posts/111/"
+        ]
+
+    def test_dedup_and_order(self):
+        html = (
+            '<a href="/groups/g/posts/1"></a>'
+            '<a href="/groups/g/posts/2"></a>'
+            '<a href="/groups/g/posts/1"></a>'
+        )
+        urls = _permalinks_in_html(html)
+        assert [u.rstrip("/").rsplit("/", 1)[-1] for u in urls] == ["1", "2"]
+
+    def test_none_found(self):
+        assert _permalinks_in_html("<div>no links at all</div>") == []
+        assert _permalinks_in_html("") == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2h", True),
+        ("15 m", True),
+        ("3 hrs", True),
+        ("5 days ago", True),
+        ("Yesterday at 9:41 PM", True),
+        ("July 8 at 3:45 PM", True),
+        ("Just now", True),
+        ("Ravi Kumar", False),
+        ("Like", False),
+        ("", False),
+        ("a very long piece of text that is clearly not a timestamp", False),
+    ],
+)
+def test_looks_like_timestamp_text(text, expected):
+    assert _looks_like_timestamp_text(text) is expected

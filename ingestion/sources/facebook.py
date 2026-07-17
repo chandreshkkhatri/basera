@@ -91,6 +91,50 @@ def _is_post_href(href: str) -> bool:
     return any(p in href for p in ("/posts/", "/permalink/", "story.php", "story_fbid="))
 
 
+# Permalink shapes findable in raw HTML (hydrated links our selectors missed,
+# comment permalinks, share dialogs). Relative or absolute.
+_PERMALINK_RE = re.compile(
+    r"(?:https://www\.facebook\.com)?/groups/[^/\"'?#]+/(?:posts|permalink)/\d+"
+)
+_STORY_RE = re.compile(r"story\.php\?story_fbid=\d+&(?:amp;)?id=\d+")
+
+# Relative-time text Facebook uses for post timestamps ("5m", "3 hrs", "2d",
+# "Yesterday at 9:41 PM", "July 8 at 3:45 PM"). Used to pick hover targets.
+_TIMESTAMP_TEXT_RE = re.compile(
+    r"^\s*(\d+\s*(?:s|m|h|d|w|min(?:s|utes)?|hr(?:s)?|hour(?:s)?|day(?:s)?|week(?:s)?)\b"
+    r"|yesterday\b|just now\b|[a-z]+ \d{1,2}\b)",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_timestamp_text(text: str) -> bool:
+    """True for short relative/absolute post-time labels — hover candidates."""
+    t = " ".join((text or "").split())
+    if not t or len(t) > 30:
+        return False
+    return bool(_TIMESTAMP_TEXT_RE.match(t))
+
+
+def _permalinks_in_html(html: str) -> list[str]:
+    """Permalink-shaped URLs present anywhere in a post's HTML, normalized and
+    deduped, absolute. Order of appearance preserved."""
+    found: list[str] = []
+    for m in _PERMALINK_RE.finditer(html or ""):
+        url = m.group(0)
+        if url.startswith("/"):
+            url = f"https://www.facebook.com{url}"
+        url = normalize_post_url(url)
+        if url not in found:
+            found.append(url)
+    for m in _STORY_RE.finditer(html or ""):
+        url = normalize_post_url(
+            "https://www.facebook.com/" + m.group(0).replace("&amp;", "&")
+        )
+        if url not in found:
+            found.append(url)
+    return found
+
+
 def reconstruct_post_url(group: Optional[str], message_id: str) -> Optional[str]:
     """Rebuild a canonical group-post permalink from a numeric post id captured
     in the message id, when direct URL extraction came up empty. Only works when
@@ -174,6 +218,7 @@ class FacebookSource:
         self.use_api = use_api
         self.playwright = None
         self.context = None
+        self._clicks_used = 0
         self.page = None
 
     # -- entry -----------------------------------------------------------
@@ -361,6 +406,7 @@ class FacebookSource:
     # -- browser helpers (selectors verbatim) ----------------------------
     def _setup_playwright(self) -> None:
         s = self.settings
+        self._clicks_used = 0  # per-run cap for click-through URL resolution
         self.playwright = sync_playwright().start()
         user_data = s.chrome_user_data_dir or str(s.state_path / "profiles" / "facebook")
         launch_options: dict = {"headless": s.headless}
@@ -465,6 +511,9 @@ class FacebookSource:
             log.debug("Could not switch feed: %s", e)
 
     def _post_url(self, post) -> str:
+        """FAST path only — called for every visible post on every scroll pass,
+        so it must stay cheap. The interactive ladder lives in
+        _post_url_aggressive (once per processed post)."""
         # 1. The timestamp usually links to the post permalink.
         url = ""
         try:
@@ -488,6 +537,111 @@ class FacebookSource:
             except Exception as e:  # noqa: BLE001
                 log.debug("link url failed: %s", e)
         return normalize_post_url(url)
+
+    def _post_url_aggressive(self, post) -> str:
+        """Escalation ladder for the post permalink. Facebook renders the
+        timestamp as a bare role=link node and only materializes the real
+        <a href=…> ON HOVER, so steps 2+ interact with the page — slower per
+        post, which is the accepted tradeoff for actually having links.
+        1. fast selector pass  2. hover timestamps, rescan anchors
+        3. regex the raw HTML  4. click-through and read the URL (capped)."""
+        url = self._post_url(post)
+        if url:
+            return url
+
+        hovered = self._hover_timestamps(post)
+        if hovered:
+            url = self._scan_anchors(post)
+            if url:
+                return url
+
+        try:
+            permalinks = _permalinks_in_html(post.inner_html())
+            if permalinks:
+                return permalinks[0]
+        except Exception as e:  # noqa: BLE001
+            log.debug("html permalink scan failed: %s", e)
+
+        return self._post_url_via_click(post)
+
+    def _timestamp_nodes(self, post, limit: int):
+        """Yield role=link nodes whose accessible text looks like a post time."""
+        found = 0
+        try:
+            nodes = post.locator("[role='link']")
+            for i in range(min(nodes.count(), 25)):
+                if found >= limit:
+                    return
+                node = nodes.nth(i)
+                try:
+                    text = (
+                        node.get_attribute("aria-label")
+                        or node.get_attribute("title")
+                        or node.inner_text(timeout=500)
+                    )
+                except Exception:  # noqa: BLE001
+                    continue
+                if _looks_like_timestamp_text(text or ""):
+                    found += 1
+                    yield node
+        except Exception as e:  # noqa: BLE001
+            log.debug("timestamp node scan failed: %s", e)
+
+    def _hover_timestamps(self, post) -> int:
+        """Hover timestamp-ish nodes to make Facebook hydrate their hrefs."""
+        s = self.settings
+        hovered = 0
+        for node in self._timestamp_nodes(post, s.url_hover_max_candidates):
+            try:
+                node.hover(timeout=1500)
+                self.page.wait_for_timeout(s.url_hover_wait_ms)
+                hovered += 1
+            except Exception as e:  # noqa: BLE001
+                log.debug("hover failed: %s", e)
+        return hovered
+
+    def _scan_anchors(self, post) -> str:
+        try:
+            links = post.locator("a[href]")
+            for i in range(min(links.count(), 15)):
+                href = links.nth(i).get_attribute("href") or ""
+                if _is_post_href(href):
+                    return normalize_post_url(href)
+        except Exception as e:  # noqa: BLE001
+            log.debug("anchor rescan failed: %s", e)
+        return ""
+
+    def _post_url_via_click(self, post) -> str:
+        """Last resort: click the timestamp and read the resulting URL.
+        Facebook usually opens the permalink as a modal (URL changes, feed
+        stays mounted underneath), so go_back() restores the feed intact.
+        Capped per run — this is the slowest rung."""
+        s = self.settings
+        if not s.url_click_fallback or self._clicks_used >= s.url_click_max_per_run:
+            return ""
+        before = self.page.url
+        captured = ""
+        for node in self._timestamp_nodes(post, 1):
+            self._clicks_used += 1
+            try:
+                node.click(timeout=2000)
+                self.page.wait_for_url(
+                    lambda u: u != before, timeout=s.url_click_wait_ms
+                )
+            except Exception as e:  # noqa: BLE001
+                log.debug("click-through nav failed: %s", e)
+            current = self.page.url
+            if current != before and _is_post_href(current):
+                captured = normalize_post_url(current)
+                log.info("Resolved post URL via click-through (%d/%d used)",
+                         self._clicks_used, s.url_click_max_per_run)
+            try:
+                if self.page.url != before:
+                    self.page.go_back()
+                    self.page.wait_for_timeout(1500)
+            except Exception as e:  # noqa: BLE001
+                log.debug("go_back after click failed: %s", e)
+        return captured
 
     def _extract_post(self, post) -> Optional[dict]:
         try:
@@ -547,7 +701,7 @@ class FacebookSource:
             return {
                 "text": post_text,
                 "timestamp": timestamp,
-                "post_url": self._post_url(post),
+                "post_url": self._post_url_aggressive(post),
                 "author_name": author_name,
             }
         except Exception as e:  # noqa: BLE001

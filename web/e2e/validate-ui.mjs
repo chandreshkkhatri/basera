@@ -20,7 +20,7 @@ try {
   const desktop = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     geolocation: { latitude: 18.5362, longitude: 73.894 },
-    permissions: ["geolocation"],
+    permissions: ["geolocation", "clipboard-read", "clipboard-write"],
   });
   const page = await desktop.newPage();
 
@@ -97,6 +97,15 @@ try {
   await page.goto(`${BASE}${firstHref}`, { waitUntil: "networkidle" });
   check("detail: has h1 rent heading", await page.locator("h1").first().isVisible());
   check("detail: has media banner", await page.locator(".aspect-2\\/1, [class*='aspect-2']").first().isVisible());
+
+  // Search-in-group terms: panel renders + copy button round-trips clipboard.
+  const termsPanel = page.getByTestId("search-terms");
+  check("detail: search-terms panel", await termsPanel.isVisible());
+  const firstTerm = termsPanel.locator("button").first();
+  const termText = (await firstTerm.locator("span").textContent()) ?? "";
+  await firstTerm.click();
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  check("detail: copy puts term on clipboard", clip.length > 0 && clip === termText.trim(), `"${clip.slice(0, 40)}"`);
   await page.screenshot({ path: `${OUT}/05-detail.png`, fullPage: true });
 
   // --- Mobile ---

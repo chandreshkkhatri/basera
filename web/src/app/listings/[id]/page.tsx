@@ -7,6 +7,7 @@ import { SourceBadge } from "@/components/source-badge";
 import { PostedAgo } from "@/components/posted-ago";
 import { ContactButton } from "@/components/contact-button";
 import { DistanceChip } from "@/components/distance-chip";
+import { SearchTerms } from "@/components/search-terms";
 import { ListingMedia } from "@/components/listing-media";
 import { MiniMap } from "@/components/map/mini-map";
 import { Badge } from "@/components/ui/badge";
@@ -154,6 +155,7 @@ export default async function ListingDetailPage({
             From group “{listing.sourceGroup}”
           </p>
         ) : null}
+        <SearchTerms text={listing.originalText} />
       </div>
 
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 rounded-xl border p-4 sm:grid-cols-2">

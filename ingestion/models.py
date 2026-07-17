@@ -158,6 +158,9 @@ class RunStats:
     not_offer: int = 0
     extraction_failed: int = 0
     geocode_failed: int = 0
+    # New posts captured WITHOUT a direct post URL — the capture-rate signal
+    # for the interactive URL-extraction ladder in sources/facebook.py.
+    url_missing: int = 0
     listings_upserted: int = 0
     # Not persisted (finish_run reads only the counters); lets the analyze
     # path report a quota stop to the CLI so the runner can cool down.
@@ -169,6 +172,7 @@ class RunStats:
             f"not_rental={self.not_rental} not_offer={self.not_offer} "
             f"extract_failed={self.extraction_failed} "
             f"geocode_failed={self.geocode_failed} "
+            f"url_missing={self.url_missing} "
             f"upserted={self.listings_upserted}"
         )
 

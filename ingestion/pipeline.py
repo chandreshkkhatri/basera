@@ -199,6 +199,8 @@ def run_source(
                 post = pending
             else:
                 stats.posts_new += 1
+                if not post.source_url:
+                    stats.url_missing += 1
             if scrape_only:
                 continue
             try:
