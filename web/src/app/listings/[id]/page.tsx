@@ -7,7 +7,9 @@ import { SourceBadge } from "@/components/source-badge";
 import { PostedAgo } from "@/components/posted-ago";
 import { ContactButton } from "@/components/contact-button";
 import { DistanceChip } from "@/components/distance-chip";
+import { SaveButton } from "@/components/saves/save-button";
 import { SearchTerms } from "@/components/search-terms";
+import { ShareButton } from "@/components/share-button";
 import { ListingMedia } from "@/components/listing-media";
 import { MiniMap } from "@/components/map/mini-map";
 import { Badge } from "@/components/ui/badge";
@@ -92,6 +94,7 @@ export default async function ListingDetailPage({
       <div className="relative aspect-2/1 overflow-hidden rounded-xl border">
         <ListingMedia source={listing.source} glyphClassName="text-8xl" />
         <SourceBadge source={listing.source} className="absolute top-3 right-3" />
+        <SaveButton id={listing.id} size="md" className="absolute top-3 left-3" />
       </div>
 
       <div>
@@ -137,7 +140,12 @@ export default async function ListingDetailPage({
       )}
 
       <div className="rounded-xl border p-4">
-        <ContactButton listing={listing} />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <ContactButton listing={listing} />
+          <ShareButton
+            title={`${formatRent(listing.rent)}${listing.bhk ? ` · ${listing.bhk}` : ""} in ${place}`}
+          />
+        </div>
         {isUrl(listing.sourceGroup) ? (
           <p className="mt-3 text-sm text-muted-foreground">
             From group{" "}

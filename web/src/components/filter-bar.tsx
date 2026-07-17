@@ -339,6 +339,14 @@ export function FilterBar() {
           </Button>
         </div>
       </div>
+      <ActiveFilterChips
+        get={get}
+        getList={getList}
+        setParam={setParam}
+        toggleInList={toggleInList}
+        commit={commit}
+      />
+
       {/* Mirrors the server: the age penalty applies whenever the distance
           sort is usable (POI present). */}
       {currentSort === "distance" && get("poiLat") && get("poiLng") && (
@@ -347,6 +355,87 @@ export function FilterBar() {
           {DISTANCE_SORT_AGE_PENALTY_KM_PER_DAY} km of distance.
         </div>
       )}
+    </div>
+  );
+}
+
+/** One dismissible chip per applied filter — state stays visible without
+ *  opening the Filters sheet. Removal reuses the same commit helpers. */
+function ActiveFilterChips({
+  get,
+  getList,
+  setParam,
+  toggleInList,
+  commit,
+}: {
+  get: (k: string) => string;
+  getList: (k: string) => string[];
+  setParam: (key: string, value: string) => void;
+  toggleInList: (key: string, value: string) => void;
+  commit: (mutate: (q: URLSearchParams) => void) => void;
+}) {
+  const rupees = (v: string) => `₹${Number(v).toLocaleString("en-IN")}`;
+  const chips: { label: string; onRemove: () => void }[] = [];
+
+  if (get("q")) {
+    chips.push({ label: `“${get("q")}”`, onRemove: () => setParam("q", "") });
+  }
+  const rentMin = get("rentMin");
+  const rentMax = get("rentMax");
+  if (rentMin || rentMax) {
+    const label =
+      rentMin && rentMax
+        ? `${rupees(rentMin)}–${rupees(rentMax)}`
+        : rentMin
+          ? `≥ ${rupees(rentMin)}`
+          : `≤ ${rupees(rentMax)}`;
+    chips.push({
+      label,
+      onRemove: () =>
+        commit((q) => {
+          q.delete("rentMin");
+          q.delete("rentMax");
+        }),
+    });
+  }
+  for (const b of getList("bhk")) {
+    chips.push({
+      label: BHK_LABELS[b as keyof typeof BHK_LABELS] ?? b,
+      onRemove: () => toggleInList("bhk", b),
+    });
+  }
+  for (const g of getList("gender")) {
+    chips.push({ label: genderLabel(g), onRemove: () => toggleInList("gender", g) });
+  }
+  for (const f of getList("furnishing")) {
+    chips.push({
+      label: furnishingLabel(f) ?? f,
+      onRemove: () => toggleInList("furnishing", f),
+    });
+  }
+  if (get("postedWithin")) {
+    chips.push({
+      label: POSTED_LABELS[get("postedWithin")] ?? get("postedWithin"),
+      onRemove: () => setParam("postedWithin", ""),
+    });
+  }
+
+  if (chips.length === 0) return null;
+
+  return (
+    <div data-testid="active-filters" className="flex flex-wrap items-center gap-1.5">
+      {chips.map((c) => (
+        <button
+          key={c.label}
+          type="button"
+          onClick={c.onRemove}
+          title="Remove filter"
+          className="inline-flex items-center gap-1 rounded-full border bg-muted/40 py-0.5 pr-1.5 pl-2.5 text-xs text-foreground transition-colors hover:bg-muted"
+        >
+          {c.label}
+          <X className="size-3 text-muted-foreground" />
+        </button>
+      ))}
     </div>
   );
 }
@@ -547,7 +636,7 @@ function RentInputs({
         placeholder="Min ₹"
         value={rentMin}
         onChange={(e) => setRentMin(e.target.value)}
-        className="h-8 w-[100px]"
+        className="h-8 w-25"
       />
       <Input
         type="number"
@@ -555,7 +644,7 @@ function RentInputs({
         placeholder="Max ₹"
         value={rentMax}
         onChange={(e) => setRentMax(e.target.value)}
-        className="h-8 w-[100px]"
+        className="h-8 w-25"
       />
     </>
   );

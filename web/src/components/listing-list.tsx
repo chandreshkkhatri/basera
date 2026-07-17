@@ -5,6 +5,7 @@ import { SourceBadge } from "@/components/source-badge";
 import { PostedAgo } from "@/components/posted-ago";
 import { DistanceChip } from "@/components/distance-chip";
 import { ListingMedia } from "@/components/listing-media";
+import { SaveButton } from "@/components/saves/save-button";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -46,6 +47,7 @@ export function ListingList({ listings }: { listings: ListingRow[] }) {
                 "Distance",
                 "Posted",
                 "Source",
+                "", // save-button column
               ].map((h, i) => (
                 <TableHead
                   key={h}
@@ -122,6 +124,10 @@ function ListingTableRow({ listing }: { listing: ListingRow }) {
       <TableCell>
         <SourceBadge source={listing.source} />
       </TableCell>
+      <TableCell>
+        {/* z-10 lifts the button above the row's overlay link */}
+        <SaveButton id={listing.id} className="relative z-10" />
+      </TableCell>
     </TableRow>
   );
 }
@@ -156,7 +162,10 @@ function ListingRow({ listing }: { listing: ListingRow }) {
               Rent not specified
             </p>
           )}
-          <SourceBadge source={listing.source} className="shrink-0" />
+          <span className="flex shrink-0 items-center gap-1.5">
+            <SourceBadge source={listing.source} />
+            <SaveButton id={listing.id} />
+          </span>
         </div>
 
         <p className="flex items-center gap-1 text-sm text-muted-foreground">

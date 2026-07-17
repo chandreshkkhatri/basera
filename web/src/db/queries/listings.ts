@@ -245,6 +245,31 @@ export async function suggestLocations(
   return out;
 }
 
+/**
+ * Saved-listings fetch: rows by id, any status (a saved-but-archived listing
+ * still shows, with its status banner), rentals only. Preserves the caller's
+ * id order so the shortlist stays stable.
+ */
+export async function getListingsByIds(ids: number[]): Promise<ListingRow[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select()
+    .from(listings)
+    .where(
+      and(
+        eq(listings.isRental, true),
+        sql`${listings.id} in ${sql`(${sql.join(
+          ids.map((id) => sql`${id}`),
+          sql`, `,
+        )})`}`,
+      ),
+    );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return ids
+    .filter((id) => byId.has(id))
+    .map((id) => ({ ...byId.get(id)!, distanceKm: null }));
+}
+
 /** cache(): the detail page and its generateMetadata both fetch the row. */
 export const getListingById = cache(
   async (id: number): Promise<Listing | null> => {

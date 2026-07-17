@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/", label: "Feed" },
   { href: "/map", label: "Map" },
+  { href: "/saved", label: "Saved" },
 ];
 
 export function SiteHeader({ cities }: { cities: City[] }) {

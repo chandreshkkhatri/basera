@@ -5,6 +5,7 @@ import { SourceBadge } from "@/components/source-badge";
 import { PostedAgo } from "@/components/posted-ago";
 import { DistanceChip } from "@/components/distance-chip";
 import { ListingMedia } from "@/components/listing-media";
+import { SaveButton } from "@/components/saves/save-button";
 import { Badge } from "@/components/ui/badge";
 import { formatRentAmount } from "@/lib/format";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
@@ -24,6 +25,7 @@ export function ListingCard({ listing }: { listing: ListingRow }) {
       <div className="relative aspect-16/10 overflow-hidden">
         <ListingMedia source={listing.source} glyphClassName="text-6xl" />
         <SourceBadge source={listing.source} className="absolute top-2 right-2" />
+        <SaveButton id={listing.id} className="absolute top-2 left-2" />
       </div>
 
       <div className="flex flex-1 flex-col gap-2.5 p-4">

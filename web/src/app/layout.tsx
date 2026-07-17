@@ -3,6 +3,7 @@ import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { BottomNav } from "@/components/bottom-nav";
 import { PoiProvider } from "@/components/poi/poi-provider";
+import { SavesProvider } from "@/components/saves/saves-provider";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { getEnabledCities } from "@/db/queries/cities";
@@ -64,15 +65,17 @@ export default async function RootLayout({
       </head>
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <PoiProvider>
-          <SiteHeader cities={cities} />
-          <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
-            {children}
-          </main>
-          {/* pb clears the fixed BottomNav on mobile. */}
-          <div className="pb-14 sm:pb-0">
-            <SiteFooter />
-          </div>
-          <BottomNav />
+          <SavesProvider>
+            <SiteHeader cities={cities} />
+            <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
+              {children}
+            </main>
+            {/* pb clears the fixed BottomNav on mobile. */}
+            <div className="pb-14 sm:pb-0">
+              <SiteFooter />
+            </div>
+            <BottomNav />
+          </SavesProvider>
         </PoiProvider>
       </body>
     </html>

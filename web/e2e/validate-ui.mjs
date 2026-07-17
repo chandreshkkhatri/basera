@@ -107,6 +107,34 @@ try {
     check("picking a suggestion filters the feed", qParam === firstLoc.trim(), `q=${qParam}`);
   }
 
+  // --- Applied-filter chips ---
+  await page.goto(`${BASE}/?bhk=2&rentMax=25000`, { waitUntil: "networkidle" });
+  const chipRow = page.getByTestId("active-filters");
+  const chipCount = await chipRow.locator("button").count().catch(() => 0);
+  check("filter chips render for active filters", chipCount === 2, `${chipCount} chips`);
+  await chipRow.locator("button", { hasText: "2 BHK" }).click();
+  await page.waitForTimeout(600);
+  check(
+    "removing a chip clears its URL param",
+    new URL(page.url()).searchParams.get("bhk") === null &&
+      new URL(page.url()).searchParams.get("rentMax") === "25000",
+  );
+
+  // --- Saved listings ---
+  await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  // :visible — the DOM-first save button sits in the hidden mobile list.
+  await page.locator("button[aria-label='Save listing']:visible").first().click();
+  await page.goto(`${BASE}/saved`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(800);
+  const savedRows = await page.locator("[data-slot='table'] tbody tr:visible").count();
+  check("saved page shows the saved listing", savedRows === 1, `${savedRows} rows`);
+  await page.locator("button[aria-pressed='true']:visible").first().click();
+  await page.waitForTimeout(400);
+  check(
+    "unsaving empties the shortlist",
+    await page.getByText("Nothing saved yet").isVisible().catch(() => false),
+  );
+
   // --- Detail page ---
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
   const firstHref = await page.locator("a[href^='/listings/']").first().getAttribute("href");
@@ -122,6 +150,24 @@ try {
   await firstTerm.click();
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   check("detail: copy puts term on clipboard", clip.length > 0 && clip === termText.trim(), `"${clip.slice(0, 40)}"`);
+
+  // Share button: no navigator.share in headless desktop -> clipboard path.
+  await page.getByTestId("share-button").click();
+  const sharedUrl = await page.evaluate(() => navigator.clipboard.readText());
+  check("detail: share copies listing URL", sharedUrl.includes("/listings/"), sharedUrl.slice(0, 60));
+
+  // OG images respond with PNGs.
+  const ogListing = await page.request.get(`${BASE}${firstHref}/opengraph-image`);
+  check(
+    "listing OG image renders",
+    ogListing.ok() && (ogListing.headers()["content-type"] ?? "").includes("image/png"),
+    ogListing.headers()["content-type"],
+  );
+  const ogRoot = await page.request.get(`${BASE}/opengraph-image`);
+  check("root OG image renders", ogRoot.ok() && (ogRoot.headers()["content-type"] ?? "").includes("image/png"));
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(`${OUT}/og-listing.png`, await ogListing.body());
+
   await page.screenshot({ path: `${OUT}/05-detail.png`, fullPage: true });
 
   // --- Mobile ---
