@@ -204,6 +204,47 @@ export async function getMapListings(
   return { rows, total: countResult[0]?.count ?? 0 };
 }
 
+/**
+ * Locality autocomplete for the feed's search box: distinct extracted
+ * `location` values with live listings in the city, most frequent first.
+ * ILIKE rides the trigram index from migration 0005. Case-insensitive
+ * dedupe keeps the most common casing variant.
+ */
+export async function suggestLocations(
+  q: string,
+  cityId: number,
+  limit = 8,
+): Promise<{ location: string; count: number }[]> {
+  const escaped = q.replace(/[\\%_]/g, (m) => `\\${m}`);
+  const rows = await db
+    .select({ location: listings.location, count: sql<number>`count(*)::int` })
+    .from(listings)
+    .where(
+      and(
+        eq(listings.cityId, cityId),
+        eq(listings.isRental, true),
+        eq(listings.isOffer, true),
+        eq(listings.status, "active"),
+        sql`${listings.location} ilike ${`%${escaped}%`}`,
+      ),
+    )
+    .groupBy(listings.location)
+    .orderBy(sql`count(*) desc`)
+    .limit(limit * 2);
+
+  const seen = new Set<string>();
+  const out: { location: string; count: number }[] = [];
+  for (const r of rows) {
+    if (!r.location) continue;
+    const key = r.location.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ location: r.location, count: r.count });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 /** cache(): the detail page and its generateMetadata both fetch the row. */
 export const getListingById = cache(
   async (id: number): Promise<Listing | null> => {

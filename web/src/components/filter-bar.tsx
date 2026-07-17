@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -242,7 +248,12 @@ export function FilterBar() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <SearchInput key={`q:${get("q")}`} value={get("q")} setParam={setParam} />
+        <SearchInput
+          key={`q:${get("q")}`}
+          value={get("q")}
+          city={get("city")}
+          setParam={setParam}
+        />
 
         <RentInputs
           key={`${get("rentMin")}:${get("rentMax")}`}
@@ -370,14 +381,23 @@ function LayoutToggleButton({
   );
 }
 
+type LocationSuggestion = { location: string; count: number };
+
 function SearchInput({
   value,
+  city,
   setParam,
 }: {
   value: string;
+  city: string;
   setParam: (key: string, value: string) => void;
 }) {
   const [q, setQ] = useState(value);
+  const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  // The value we just picked from the dropdown — don't re-suggest it.
+  const picked = useRef<string | null>(null);
 
   // Debounce the locality search into the URL (same pattern as RentInputs).
   useEffect(() => {
@@ -387,6 +407,61 @@ function SearchInput({
     return () => clearTimeout(t);
   }, [q, value, setParam]);
 
+  // Debounced autocomplete: localities that actually have listings in the
+  // current city, so every suggestion is guaranteed to yield results.
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2 || term === picked.current) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ q: term });
+        if (city) params.set("city", city);
+        const res = await fetch(`/api/locations?${params}`, {
+          signal: ctrl.signal,
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { suggestions: LocationSuggestion[] };
+        setSuggestions(data.suggestions ?? []);
+        setOpen((data.suggestions ?? []).length > 0);
+        setActive(-1);
+      } catch {
+        // aborted or offline — suggestions are progressive enhancement
+      }
+    }, 250);
+    return () => {
+      ctrl.abort();
+      clearTimeout(t);
+    };
+  }, [q, city]);
+
+  const pick = (loc: string) => {
+    picked.current = loc;
+    setOpen(false);
+    setQ(loc);
+    setParam("q", loc);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((a) => (a + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((a) => (a <= 0 ? suggestions.length - 1 : a - 1));
+    } else if (e.key === "Enter" && active >= 0) {
+      e.preventDefault();
+      pick(suggestions[active].location);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
   return (
     <div className="relative">
       <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -395,9 +470,44 @@ function SearchInput({
         placeholder="Search locality…"
         value={q}
         onChange={(e) => setQ(e.target.value)}
+        onKeyDown={onKeyDown}
+        onBlur={() => setOpen(false)}
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
         className="h-8 w-40 pl-8 sm:w-48"
         aria-label="Search locality"
       />
+      {open && (
+        <ul
+          data-testid="location-suggestions"
+          role="listbox"
+          className="absolute z-20 mt-1 max-h-64 w-64 overflow-auto rounded-lg border bg-popover py-1 shadow-lg"
+        >
+          {suggestions.map((s, i) => (
+            <li key={s.location} role="option" aria-selected={i === active}>
+              <button
+                type="button"
+                // mousedown fires before the input's blur closes the list
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(s.location);
+                }}
+                onMouseEnter={() => setActive(i)}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm",
+                  i === active ? "bg-muted" : "hover:bg-muted/60",
+                )}
+              >
+                <span className="truncate">{s.location}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {s.count}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

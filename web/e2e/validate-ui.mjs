@@ -91,6 +91,22 @@ try {
     `${latBefore} -> ${latAfter}`,
   );
 
+  // --- Locality search autocomplete ---
+  await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  const searchBox = page.getByRole("combobox", { name: /search locality/i });
+  await searchBox.fill("ba");
+  const suggList = page.getByTestId("location-suggestions");
+  await suggList.waitFor({ state: "visible", timeout: 6000 }).catch(() => {});
+  const suggCount = await suggList.locator("li").count().catch(() => 0);
+  check("locality autocomplete shows suggestions", suggCount > 0, `${suggCount} items`);
+  if (suggCount > 0) {
+    const firstLoc = (await suggList.locator("li span").first().textContent()) ?? "";
+    await suggList.locator("li button").first().click();
+    await page.waitForTimeout(700);
+    const qParam = new URL(page.url()).searchParams.get("q");
+    check("picking a suggestion filters the feed", qParam === firstLoc.trim(), `q=${qParam}`);
+  }
+
   // --- Detail page ---
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
   const firstHref = await page.locator("a[href^='/listings/']").first().getAttribute("href");
