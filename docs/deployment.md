@@ -118,21 +118,64 @@ Once running, you can monitor the ingestion history and status from the `/status
 ## Troubleshooting
 
 ### Resolving `LOGIN_EXPIRY (critical)` Error
-This error occurs when the Facebook scraper session cookie (`c_user`) stored under the browser profile directory (`ingestion/state/profiles/facebook`) has expired or been invalidated by Facebook. Because production runs in `HEADLESS=true` mode, the container cannot complete an interactive login and will fail immediately.
+This alert fires when a scrape run can't find a logged-in Facebook session —
+the `c_user` cookie is missing from the browser profile
+(`ingestion/state/profiles/facebook`). Production runs `HEADLESS=true`, so the
+server cannot complete an interactive login itself.
 
-To resolve this issue:
+#### Step 0: Check whether it's transient (often it is)
+The alert is sent on the FIRST failed run, but the runner sleeps 60 minutes
+and retries — and Facebook login checks do fail transiently. A real expiry
+keeps alerting across several retries; a transient one self-heals. Before
+doing anything:
 
-#### Method 1: Local Session Re-Authentication (Recommended)
-1. In your local development workspace, temporarily set `HEADLESS=false` in your `.env` file.
-2. Run the ingestion command manually for a single post to trigger browser login:
+```bash
+# Did later cycles recover?
+ssh <vm> "journalctl --user -u basera-runner --since '-3 hours' --no-pager \
+  | grep -iE 'logged in|login required|Run complete' | tail -20"
+
+# Is the session cookie alive? (c_user AND xs must both be present/unexpired)
+ssh <vm> '~/deployments/prod/basera/.venv/bin/python - <<"PY"
+import sqlite3, glob, datetime
+ck = glob.glob("/home/*/deployments/prod/basera/ingestion/state/profiles/facebook/Default/Cookies")[0]
+con = sqlite3.connect(f"file:{ck}?mode=ro&immutable=1", uri=True)
+for name, exp in con.execute("select name, expires_utc from cookies where host_key like \"%facebook.com\" and name in (\"c_user\",\"xs\")"):
+    print(name, datetime.datetime.fromtimestamp(exp/1000000-11644473600, datetime.UTC))
+PY'
+```
+
+If the log shows "Already logged in" on recent cycles: do nothing. Facebook
+periodically rotates `c_user`/`xs` with fresh one-year expiries on successful
+runs. Note: an invalidated `xs` (while `c_user` lingers) means Facebook
+hard-killed the session — that's a real expiry.
+
+#### Method 1: Re-login locally, transfer the profile (Recommended)
+The VM has no display, so the interactive login happens on a workstation and
+the refreshed profile is copied over:
+
+1. Stop the runner: `ssh <vm> 'systemctl --user stop basera-runner'`
+2. On a machine with a display, from the repo root:
    ```bash
-   python -m ingestion run --posts 1
+   HEADLESS=false .venv/bin/python -m ingestion run --group <any group url> --posts 1
    ```
-3. A Chrome browser window will open. Enter your Facebook credentials and solve any 2FA prompts.
-4. Once the command completes successfully, copy the updated profile directory from your local machine to your production server:
-   * Local Path: `ingestion/state/profiles/facebook/`
-   * Server Target: `/opt/basera/state/profiles/facebook/`
-5. Restart your server's ingestion container or wait for the next cron cycle.
+   Log in to Facebook in the Chrome window (solve 2FA if prompted); let the
+   command finish.
+3. Transfer the profile, excluding browser caches (1.6 GB → ~12 MB; the
+   session lives in `Default/Cookies`):
+   ```bash
+   rsync -az --exclude='**/Cache/' --exclude='**/Code Cache/' --exclude='**/GPUCache/' \
+     --exclude='**/GrShaderCache/' --exclude='**/ShaderCache/' --exclude='**/CacheStorage/' \
+     ingestion/state/profiles <vm>:~/deployments/prod/basera/ingestion/state/
+   ```
+4. Restart: `ssh <vm> 'systemctl --user start basera-runner'` and watch
+   `journalctl --user -u basera-runner -f` for "Already logged in".
+
+#### Reducing login risk
+The URL-extraction ladder's click-through rung (clicking posts to resolve
+permalinks) is the most automation-like behavior the scraper performs. If
+login expiries become frequent, set `URL_CLICK_FALLBACK=false` in the VM's
+`.env` (keeps the safer hover + HTML-regex extraction) and restart the
+runner — no redeploy needed.
 
 #### Method 2: Switch to Facebook Graph API Mode
 To bypass browser session timeouts entirely, configure Facebook Graph API mode in your production server's `.env`:
