@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/components/auth/auth-provider";
 import { BottomNav } from "@/components/bottom-nav";
 import { PoiProvider } from "@/components/poi/poi-provider";
 import { SavesProvider } from "@/components/saves/saves-provider";
@@ -64,6 +65,7 @@ export default async function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
       </head>
       <body className="min-h-full flex flex-col bg-background text-foreground">
+        <AuthProvider>
         <PoiProvider>
           <SavesProvider>
             <SiteHeader cities={cities} />
@@ -77,6 +79,7 @@ export default async function RootLayout({
             <BottomNav />
           </SavesProvider>
         </PoiProvider>
+        </AuthProvider>
       </body>
     </html>
   );

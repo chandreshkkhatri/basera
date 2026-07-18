@@ -2,14 +2,18 @@
 
 import { useEffect, useState } from "react";
 import type { ListingRow } from "@/db/queries/listings";
+import { useAuth } from "@/components/auth/auth-provider";
 import { useSaves } from "@/components/saves/saves-provider";
 import { ListingList } from "@/components/listing-list";
 import { EmptyState } from "@/components/empty-state";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function SavedScreen() {
   const { savedIds, ready } = useSaves();
+  const { enabled, user, signIn } = useAuth();
   const [rows, setRows] = useState<ListingRow[] | null>(null);
+  const signedOutGate = enabled && !user;
 
   const ids = [...savedIds];
 
@@ -47,7 +51,16 @@ export function SavedScreen() {
         </p>
       </div>
 
-      {ready && ids.length === 0 ? (
+      {signedOutGate && ids.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-12 text-center">
+          <p className="text-sm text-muted-foreground">
+            Sign in to save listings and sync your shortlist across devices.
+          </p>
+          <Button size="sm" onClick={() => void signIn()}>
+            Sign in with Google
+          </Button>
+        </div>
+      ) : ready && ids.length === 0 ? (
         <EmptyState
           title="Nothing saved yet"
           hint="Tap the heart on any listing to keep it here for later."

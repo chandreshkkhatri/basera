@@ -1,0 +1,16 @@
+rules_version = '2';
+
+// Firestore security rules for Basera's saved listings.
+// Deploy: paste into Firebase console → Firestore Database → Rules → Publish
+// (or `firebase deploy --only firestore:rules` if using the Firebase CLI).
+//
+// Each user's shortlist is a single document `saves/{uid}` shaped as
+// `{ ids: number[] }`, readable and writable ONLY by that signed-in user.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /saves/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Everything else is denied by default.
+  }
+}

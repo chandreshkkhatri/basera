@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { PoiPicker } from "@/components/poi/poi-picker";
+import { SignInButton } from "@/components/auth/sign-in-button";
 import { CitySelector } from "@/components/city-selector";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Wordmark } from "@/components/wordmark";
@@ -54,6 +55,7 @@ export function SiteHeader({ cities }: { cities: City[] }) {
             <PoiPicker />
           </div>
           <ThemeToggle />
+          <SignInButton />
         </div>
       </div>
     </header>
