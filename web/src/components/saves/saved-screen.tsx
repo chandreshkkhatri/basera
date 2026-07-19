@@ -3,55 +3,39 @@
 import { useEffect, useState, useMemo } from "react";
 import type { ListingRow } from "@/db/queries/listings";
 import { useAuth } from "@/components/auth/auth-provider";
-import { useSaves, type ShortlistStatus, type ShortlistItemMetadata } from "@/components/saves/saves-provider";
+import { useSaves } from "@/components/saves/saves-provider";
 import { ShortlistTracker } from "@/components/saves/shortlist-tracker";
+import { SHORTLIST_CONFIG } from "@/lib/shortlist";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { 
-  Sheet, 
-  SheetContent, 
-  SheetHeader, 
-  SheetTitle, 
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
   SheetDescription,
-  SheetTrigger 
+  SheetTrigger,
 } from "@/components/ui/sheet";
-import { 
-  Heart, 
-  Calendar, 
-  FileText, 
-  MessageSquare, 
-  Check, 
-  Trash2, 
+import {
+  Calendar,
+  FileText,
+  Check,
   ExternalLink,
   Edit,
   ArrowRight,
-  Info,
   Unlock,
   CheckCircle2,
-  AlertCircle
 } from "lucide-react";
 import { formatRentAmount } from "@/lib/format";
-import { furnishingLabel, genderLabel } from "@/lib/normalize";
 import { SourceBadge } from "@/components/source-badge";
 import { PostedAgo } from "@/components/posted-ago";
-import { DistanceChip } from "@/components/distance-chip";
 import { ListingMedia } from "@/components/listing-media";
 import Link from "next/link";
 
 type TabType = "all" | "active" | "booked" | "declined";
-
-const PIPELINE_STATUS_INFO: Record<ShortlistStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "ghost" | "link"; colorClass: string }> = {
-  shortlisted: { label: "Saved", variant: "secondary", colorClass: "bg-muted text-muted-foreground" },
-  contacted: { label: "Contacted", variant: "secondary", colorClass: "bg-info/10 text-info border border-info/20" },
-  scheduled: { label: "Visit Scheduled", variant: "secondary", colorClass: "bg-warning/10 text-warning border border-warning/20" },
-  visited: { label: "Visited Flat", variant: "secondary", colorClass: "bg-brand/10 text-brand font-medium border border-brand/20" },
-  applied: { label: "Applied", variant: "secondary", colorClass: "bg-brand/20 text-brand border border-brand/30" },
-  booked: { label: "Booked Flat 🎉", variant: "secondary", colorClass: "bg-success/15 text-success font-semibold border-success/30 border" },
-  declined: { label: "Declined", variant: "destructive", colorClass: "bg-destructive/10 text-destructive" },
-};
 
 export function SavedScreen() {
   const { savedIds, metadata, ready, updateMetadata } = useSaves();
@@ -64,10 +48,9 @@ export function SavedScreen() {
   const ids = useMemo(() => [...savedIds], [savedIds]);
 
   useEffect(() => {
-    if (!ready || ids.length === 0) {
-      setRows([]);
-      return;
-    }
+    // No synchronous setState here — when there are no ids the render short-
+    // circuits to the empty state, so stale `rows` are never shown.
+    if (!ready || ids.length === 0) return;
     const ctrl = new AbortController();
     (async () => {
       try {
@@ -233,10 +216,10 @@ export function SavedScreen() {
                 const itemMeta = metadata[listing.id] ?? { status: "shortlisted" };
                 const rent = formatRentAmount(listing.rent);
                 const place = [listing.location, listing.city].filter(Boolean).join(", ") || "Location n/a";
-                const info = PIPELINE_STATUS_INFO[itemMeta.status] ?? PIPELINE_STATUS_INFO.shortlisted;
+                const cfg = SHORTLIST_CONFIG[itemMeta.status] ?? SHORTLIST_CONFIG.shortlisted;
 
                 return (
-                  <Card key={listing.id} className="overflow-hidden hover:border-brand/40 transition-colors">
+                  <Card key={listing.id} data-testid="saved-card" className="overflow-hidden hover:border-brand/40 transition-colors">
                     <CardContent className="p-4 flex flex-col md:flex-row gap-5">
                       {/* Left: Thumbnail image & save heart */}
                       <div className="relative aspect-16/10 md:w-48 md:h-32 rounded-lg overflow-hidden shrink-0">
@@ -256,8 +239,8 @@ export function SavedScreen() {
                             ) : (
                               <p className="font-display text-sm font-semibold text-muted-foreground">Rent n/a</p>
                             )}
-                            <Badge variant={info.variant} className={`text-xs px-2 py-0.5 rounded-md ${info.colorClass}`}>
-                              {info.label}
+                            <Badge variant="secondary" className={`text-xs px-2 py-0.5 rounded-md ${cfg.colorClass}`}>
+                              {cfg.label}
                             </Badge>
                           </div>
 
@@ -284,7 +267,7 @@ export function SavedScreen() {
                             {itemMeta.notes && (
                               <div className="flex items-center gap-1 truncate max-w-sm">
                                 <FileText className="size-3.5 shrink-0" />
-                                <span className="truncate italic">"{itemMeta.notes}"</span>
+                                <span className="truncate italic">&ldquo;{itemMeta.notes}&rdquo;</span>
                               </div>
                             )}
                             {!itemMeta.visitDate && !itemMeta.notes && (

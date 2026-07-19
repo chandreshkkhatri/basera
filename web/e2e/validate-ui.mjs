@@ -120,16 +120,22 @@ try {
       new URL(page.url()).searchParams.get("rentMax") === "25000",
   );
 
-  // --- Saved listings ---
+  // --- Saved listings (shortlist dashboard) ---
+  // NOTE: only exercises the localStorage path (Firebase disabled, as in CI);
+  // when Firebase is configured, saving is gated behind Google sign-in.
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
   // :visible — the DOM-first save button sits in the hidden mobile list.
   await page.locator("button[aria-label='Save listing']:visible").first().click();
   await page.goto(`${BASE}/saved`, { waitUntil: "networkidle" });
   await page.waitForTimeout(800);
-  const savedRows = await page.locator("[data-slot='table'] tbody tr:visible").count();
-  check("saved page shows the saved listing", savedRows === 1, `${savedRows} rows`);
-  await page.locator("button[aria-pressed='true']:visible").first().click();
-  await page.waitForTimeout(400);
+  const savedCards = await page.getByTestId("saved-card").count();
+  check("saved dashboard shows the saved listing", savedCards === 1, `${savedCards} cards`);
+  // The dashboard has no heart — unsave from the feed, then confirm empty.
+  // Target the heart by label ('aria-pressed' also matches the layout toggle).
+  await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  await page.locator("button[aria-label='Remove from saved']:visible").first().click();
+  await page.goto(`${BASE}/saved`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(500);
   check(
     "unsaving empties the shortlist",
     await page.getByText("Nothing saved yet").isVisible().catch(() => false),

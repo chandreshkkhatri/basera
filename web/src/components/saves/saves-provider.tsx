@@ -19,27 +19,12 @@ import {
 } from "firebase/firestore";
 import { useAuth } from "@/components/auth/auth-provider";
 import { firebaseEnabled, getFirebase } from "@/lib/firebase";
+import type { ShortlistItemMetadata, ShortlistStatus } from "@/lib/shortlist";
+
+export type { ShortlistItemMetadata, ShortlistStatus };
 
 const STORAGE_KEY = "basera:saves";
-
-export type ShortlistStatus =
-  | "shortlisted"
-  | "contacted"
-  | "scheduled"
-  | "visited"
-  | "applied"
-  | "booked"
-  | "declined";
-
-export interface ShortlistItemMetadata {
-  status: ShortlistStatus;
-  notes?: string;
-  visitDate?: string;
-  contactedAt?: string;
-  visitedAt?: string;
-  bookedAt?: string;
-  updatedAt?: string;
-}
+const META_KEY = "basera:saves:meta";
 
 type SavesContext = {
   savedIds: ReadonlySet<number>;
@@ -70,11 +55,38 @@ function writeLocal(ids: number[]) {
   }
 }
 
+function readLocalMeta(): Record<number, ShortlistItemMetadata> {
+  try {
+    const raw = localStorage.getItem(META_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<number, ShortlistItemMetadata>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLocalMeta(meta: Record<number, ShortlistItemMetadata>) {
+  try {
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+  } catch {
+    // storage unavailable
+  }
+}
+
+function setsEqual(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
+
 /**
- * Shortlist store. Signed-in (Firebase configured): a Firestore doc
- * `saves/{uid}`, synced across devices. Otherwise: localStorage, exactly as
- * before — so the app is unchanged until Firebase is configured, and a signed-
- * out user's legacy local saves migrate up to Firestore on first sign-in.
+ * Shortlist store with per-listing pipeline metadata (status/notes/visitDate).
+ * Signed-in + Firebase configured: a Firestore doc `saves/{uid}`, synced across
+ * devices. Otherwise: localStorage (ids AND metadata), so the tracker works
+ * fully offline / pre-Firebase, and a signed-out user's local saves + metadata
+ * migrate up to Firestore on first sign-in.
  */
 export function SavesProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -90,13 +102,11 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
     if (cloud) return;
     const t = window.setTimeout(() => {
       const ids = readLocal();
+      const storedMeta = readLocalMeta();
+      const meta: Record<number, ShortlistItemMetadata> = {};
+      for (const id of ids) meta[id] = storedMeta[id] ?? { status: "shortlisted" };
       setSavedIds(new Set(ids));
-      
-      const localMeta: Record<number, ShortlistItemMetadata> = {};
-      for (const id of ids) {
-        localMeta[id] = { status: "shortlisted" };
-      }
-      setMetadata(localMeta);
+      setMetadata(meta);
       setReady(true);
     }, 0);
     return () => window.clearTimeout(t);
@@ -109,10 +119,23 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
     if (!fb) return;
     const ref = doc(fb.db, "saves", user.uid);
 
-    const local = readLocal();
-    if (local.length) {
-      setDoc(ref, { ids: arrayUnion(...local) }, { merge: true })
-        .then(() => writeLocal([]))
+    // Migrate legacy local saves (ids + metadata) up on first sign-in.
+    const localIds = readLocal();
+    const localMeta = readLocalMeta();
+    if (localIds.length) {
+      const metaForKnownIds: Record<number, ShortlistItemMetadata> = {};
+      for (const id of localIds) {
+        if (localMeta[id]) metaForKnownIds[id] = localMeta[id];
+      }
+      setDoc(
+        ref,
+        { ids: arrayUnion(...localIds), metadata: metaForKnownIds },
+        { merge: true },
+      )
+        .then(() => {
+          writeLocal([]);
+          writeLocalMeta({});
+        })
         .catch(() => {});
     }
 
@@ -122,16 +145,14 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
         const data = snap.data();
         const ids = (data?.ids ?? []) as number[];
         const meta = (data?.metadata ?? {}) as Record<number, ShortlistItemMetadata>;
-        setSavedIds(new Set(ids.filter((v) => Number.isInteger(v))));
-        
-        // Clean up metadata to only include keys present in ids
-        const cleanedMeta: Record<number, ShortlistItemMetadata> = {};
-        for (const id of ids) {
-          if (Number.isInteger(id)) {
-            cleanedMeta[id] = meta[id] ?? { status: "shortlisted" };
-          }
-        }
-        setMetadata(cleanedMeta);
+        const idSet = new Set(ids.filter((v) => Number.isInteger(v)));
+        // Preserve identity when the id set is unchanged (metadata-only edits
+        // are frequent) so downstream fetch effects don't needlessly re-run.
+        setSavedIds((prev) => (setsEqual(prev, idSet) ? prev : idSet));
+
+        const cleaned: Record<number, ShortlistItemMetadata> = {};
+        for (const id of idSet) cleaned[id] = meta[id] ?? { status: "shortlisted" };
+        setMetadata(cleaned);
         setReady(true);
       },
       () => setReady(true),
@@ -142,56 +163,41 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
   const toggleSave = useCallback(
     (id: number) => {
       const has = savedIds.has(id);
-      const next = new Set(savedIds);
-      if (has) next.delete(id);
-      else next.add(id);
-      setSavedIds(next); // optimistic
+      const nextIds = new Set(savedIds);
+      if (has) nextIds.delete(id);
+      else nextIds.add(id);
+      setSavedIds(nextIds); // optimistic
 
-      if (has) {
-        setMetadata((prev) => {
-          const nextMeta = { ...prev };
-          delete nextMeta[id];
-          return nextMeta;
-        });
-      } else {
-        setMetadata((prev) => ({
-          ...prev,
-          [id]: { status: "shortlisted", updatedAt: new Date().toISOString() },
-        }));
-      }
+      const nextMeta = { ...metadata };
+      if (has) delete nextMeta[id];
+      else nextMeta[id] = { status: "shortlisted", updatedAt: new Date().toISOString() };
+      setMetadata(nextMeta);
 
       if (cloud && user) {
         const fb = getFirebase();
         if (fb) {
+          const ref = doc(fb.db, "saves", user.uid);
           if (has) {
-            void updateDoc(doc(fb.db, "saves", user.uid), {
+            void updateDoc(ref, {
               ids: arrayRemove(id),
               [`metadata.${id}`]: deleteField(),
             }).catch(() => {
-              void setDoc(
-                doc(fb.db, "saves", user.uid),
-                { ids: arrayRemove(id) },
-                { merge: true }
-              ).catch(() => {});
+              void setDoc(ref, { ids: arrayRemove(id) }, { merge: true }).catch(() => {});
             });
           } else {
             void setDoc(
-              doc(fb.db, "saves", user.uid),
-              {
-                ids: arrayUnion(id),
-                metadata: {
-                  [id]: { status: "shortlisted", updatedAt: new Date().toISOString() }
-                }
-              },
+              ref,
+              { ids: arrayUnion(id), metadata: { [id]: nextMeta[id] } },
               { merge: true },
             ).catch(() => {});
           }
         }
       } else {
-        writeLocal([...next]);
+        writeLocal([...nextIds]);
+        writeLocalMeta(nextMeta);
       }
     },
-    [savedIds, cloud, user],
+    [savedIds, metadata, cloud, user],
   );
 
   const updateMetadata = useCallback(
@@ -199,46 +205,34 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
       if (!savedIds.has(id)) return;
 
       const current = metadata[id] ?? { status: "shortlisted" };
-      const updatedItem: ShortlistItemMetadata = {
-        ...current,
-        ...updates,
-        updatedAt: new Date().toISOString(),
-      };
+      const now = new Date().toISOString();
+      // Only the fields that actually change this call — written as dot-paths
+      // so a concurrent edit to a different field on another device survives.
+      const changed: Partial<ShortlistItemMetadata> = { ...updates, updatedAt: now };
+      if (updates.status === "contacted" && !current.contactedAt) changed.contactedAt = now;
+      if (updates.status === "visited" && !current.visitedAt) changed.visitedAt = now;
+      if (updates.status === "booked" && !current.bookedAt) changed.bookedAt = now;
 
-      if (updates.status) {
-        if (updates.status === "contacted" && !updatedItem.contactedAt) {
-          updatedItem.contactedAt = new Date().toISOString();
-        }
-        if (updates.status === "visited" && !updatedItem.visitedAt) {
-          updatedItem.visitedAt = new Date().toISOString();
-        }
-        if (updates.status === "booked" && !updatedItem.bookedAt) {
-          updatedItem.bookedAt = new Date().toISOString();
-        }
-      }
-
-      setMetadata((prev) => ({
-        ...prev,
-        [id]: updatedItem,
-      }));
+      const updatedItem: ShortlistItemMetadata = { ...current, ...changed };
+      const nextMap = { ...metadata, [id]: updatedItem };
+      setMetadata(nextMap);
 
       if (cloud && user) {
         const fb = getFirebase();
-        if (fb) {
-          try {
-            await setDoc(
-              doc(fb.db, "saves", user.uid),
-              {
-                metadata: {
-                  [id]: updatedItem,
-                },
-              },
-              { merge: true },
-            );
-          } catch (e) {
-            console.error("Failed to update metadata in Firestore:", e);
-          }
+        if (!fb) return;
+        const ref = doc(fb.db, "saves", user.uid);
+        const payload: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(changed)) payload[`metadata.${id}.${k}`] = v;
+        try {
+          await updateDoc(ref, payload);
+        } catch {
+          // Doc/metadata map may not exist yet (legacy row) — fall back.
+          await setDoc(ref, { metadata: { [id]: updatedItem } }, { merge: true }).catch(
+            () => {},
+          );
         }
+      } else {
+        writeLocalMeta(nextMap);
       }
     },
     [savedIds, metadata, cloud, user],

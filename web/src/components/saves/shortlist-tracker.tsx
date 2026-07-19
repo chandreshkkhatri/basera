@@ -1,53 +1,52 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { 
-  Bookmark, 
-  MessageSquare, 
-  Calendar, 
-  Eye, 
-  CheckCircle,
-  FileText, 
-  Trash2, 
-  ChevronRight,
-  AlertCircle
-} from "lucide-react";
+import { useState } from "react";
+import { AlertCircle, Calendar, FileText, Trash2 } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { useSaves, type ShortlistStatus, type ShortlistItemMetadata } from "@/components/saves/saves-provider";
+import { useSaves } from "@/components/saves/saves-provider";
+import {
+  PIPELINE_STEPS,
+  SHORTLIST_CONFIG,
+  pipelineIndex,
+  type ShortlistItemMetadata,
+  type ShortlistStatus,
+} from "@/lib/shortlist";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 interface ShortlistTrackerProps {
   listingId: number;
 }
 
-const PIPELINE_STEPS = [
-  { status: "shortlisted" as ShortlistStatus, label: "Saved", icon: Bookmark },
-  { status: "contacted" as ShortlistStatus, label: "Contacted", icon: MessageSquare },
-  { status: "scheduled" as ShortlistStatus, label: "Scheduled", icon: Calendar },
-  { status: "visited" as ShortlistStatus, label: "Visited", icon: Eye },
-  { status: "booked" as ShortlistStatus, label: "Booked", icon: CheckCircle },
-];
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function ShortlistTracker({ listingId }: ShortlistTrackerProps) {
   const { isSaved, metadata, updateMetadata } = useSaves();
   const { user, enabled, signIn } = useAuth();
-  
+
   const saved = isSaved(listingId);
   const itemMeta = saved ? (metadata[listingId] ?? { status: "shortlisted" }) : null;
 
-  const [notes, setNotes] = useState("");
-  const [visitDate, setVisitDate] = useState("");
+  const serverNotes = itemMeta?.notes ?? "";
+  const serverVisitDate = itemMeta?.visitDate ?? "";
+  const [notes, setNotes] = useState(serverNotes);
+  const [visitDate, setVisitDate] = useState(serverVisitDate);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Sync state with Firestore updates
-  useEffect(() => {
-    if (itemMeta) {
-      setNotes(itemMeta.notes ?? "");
-      setVisitDate(itemMeta.visitDate ?? "");
-    }
-  }, [itemMeta]);
+  // Reflect server changes into the edit buffers WITHOUT clobbering in-progress
+  // typing: React's "adjust state during render" pattern (state, not a ref),
+  // tracking each server field independently — so a change to one field never
+  // resets the other's buffer, and typing (server value unchanged) is untouched.
+  const [prevNotes, setPrevNotes] = useState(serverNotes);
+  if (serverNotes !== prevNotes) {
+    setPrevNotes(serverNotes);
+    setNotes(serverNotes);
+  }
+  const [prevVisitDate, setPrevVisitDate] = useState(serverVisitDate);
+  if (serverVisitDate !== prevVisitDate) {
+    setPrevVisitDate(serverVisitDate);
+    setVisitDate(serverVisitDate);
+  }
 
   if (!saved) return null;
 
@@ -71,46 +70,37 @@ export function ShortlistTracker({ listingId }: ShortlistTrackerProps) {
 
   const currentStatus = itemMeta?.status ?? "shortlisted";
   const isDeclined = currentStatus === "declined";
+  const currentStepIndex = pipelineIndex(currentStatus);
 
-  // Find index of current status in stepper
-  const currentStepIndex = PIPELINE_STEPS.findIndex((s) => s.status === currentStatus);
-
-  const handleStatusChange = async (newStatus: ShortlistStatus) => {
+  const runUpdate = async (updates: Partial<ShortlistItemMetadata>) => {
     setIsSaving(true);
-    await updateMetadata(listingId, { status: newStatus });
-    setIsSaving(false);
-  };
-
-  const handleSaveNotes = async () => {
-    setIsSaving(true);
-    await updateMetadata(listingId, { notes });
-    setIsSaving(false);
-  };
-
-  const handleVisitDateChange = async (date: string) => {
-    setVisitDate(date);
-    setIsSaving(true);
-    
-    // Automatically promote status to "scheduled" if they set a visit date but haven't got past that phase
-    const updates: Partial<ShortlistItemMetadata> = { visitDate: date };
-    if (currentStatus === "shortlisted" || currentStatus === "contacted") {
-      updates.status = "scheduled";
-    }
-    
     await updateMetadata(listingId, updates);
     setIsSaving(false);
   };
 
-  const handleDeclineToggle = async () => {
-    setIsSaving(true);
-    if (isDeclined) {
-      // Revert to shortlisted
-      await updateMetadata(listingId, { status: "shortlisted" });
-    } else {
-      await updateMetadata(listingId, { status: "declined" });
+  const handleStatusChange = (newStatus: ShortlistStatus) => runUpdate({ status: newStatus });
+  const handleSaveNotes = () => runUpdate({ notes });
+
+  const handleVisitDateChange = (date: string) => {
+    setVisitDate(date); // keep the field responsive while typing
+    const complete = ISO_DATE.test(date) && !Number.isNaN(Date.parse(date));
+    if (date === "") {
+      // A cleared date shouldn't leave the listing stuck at "scheduled".
+      const updates: Partial<ShortlistItemMetadata> = { visitDate: "" };
+      if (currentStatus === "scheduled") updates.status = "contacted";
+      void runUpdate(updates);
+    } else if (complete) {
+      const updates: Partial<ShortlistItemMetadata> = { visitDate: date };
+      if (currentStatus === "shortlisted" || currentStatus === "contacted") {
+        updates.status = "scheduled";
+      }
+      void runUpdate(updates);
     }
-    setIsSaving(false);
+    // partial/invalid input: update the buffer only, don't persist
   };
+
+  const handleDeclineToggle = () =>
+    runUpdate({ status: isDeclined ? "shortlisted" : "declined" });
 
   return (
     <div className={cn(
@@ -130,10 +120,10 @@ export function ShortlistTracker({ listingId }: ShortlistTrackerProps) {
           </p>
         </div>
         <div className="flex items-center gap-1.5">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={handleDeclineToggle}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void handleDeclineToggle()}
             className={cn(
               "h-8 px-2 text-xs",
               isDeclined ? "text-success hover:text-success" : "text-muted-foreground hover:text-destructive"
@@ -151,27 +141,27 @@ export function ShortlistTracker({ listingId }: ShortlistTrackerProps) {
           <div className="relative flex items-center justify-between w-full">
             {/* Background line */}
             <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-border -translate-y-1/2 z-0" />
-            
+
             {/* Active progress line fill */}
-            <div 
+            <div
               className="absolute top-1/2 left-0 h-0.5 bg-brand -translate-y-1/2 z-0 transition-all duration-300"
-              style={{ 
-                width: `${currentStepIndex >= 0 ? (currentStepIndex / (PIPELINE_STEPS.length - 1)) * 100 : 0}%` 
+              style={{
+                width: `${currentStepIndex >= 0 ? (currentStepIndex / (PIPELINE_STEPS.length - 1)) * 100 : 0}%`
               }}
             />
 
             {PIPELINE_STEPS.map((step, idx) => {
-              const StepIcon = step.icon;
+              const StepIcon = SHORTLIST_CONFIG[step].icon;
               const isCompleted = idx < currentStepIndex;
               const isActive = idx === currentStepIndex;
               const isPending = idx > currentStepIndex;
 
               return (
                 <button
-                  key={step.status}
-                  onClick={() => void handleStatusChange(step.status)}
+                  key={step}
+                  onClick={() => void handleStatusChange(step)}
                   className="relative z-10 flex flex-col items-center group focus:outline-none"
-                  aria-label={`Mark as ${step.label}`}
+                  aria-label={`Mark as ${SHORTLIST_CONFIG[step].label}`}
                 >
                   <div className={cn(
                     "flex items-center justify-center size-8 rounded-full border transition-all duration-200",
@@ -187,17 +177,17 @@ export function ShortlistTracker({ listingId }: ShortlistTrackerProps) {
                     isCompleted && "text-foreground",
                     isPending && "text-muted-foreground group-hover:text-foreground"
                   )}>
-                    {step.label}
+                    {SHORTLIST_CONFIG[step].label}
                   </span>
                 </button>
               );
             })}
           </div>
-          
+
           {/* Mobile Current Status Display */}
           <div className="mt-3 text-center sm:hidden">
             <span className="text-xs font-semibold text-brand bg-brand/10 px-2.5 py-1 rounded-full">
-              Status: {PIPELINE_STEPS[currentStepIndex]?.label ?? "Shortlisted"}
+              Status: {SHORTLIST_CONFIG[currentStatus].label}
             </span>
           </div>
         </div>
@@ -222,7 +212,7 @@ export function ShortlistTracker({ listingId }: ShortlistTrackerProps) {
               type="date"
               id="visit-date"
               value={visitDate}
-              onChange={(e) => void handleVisitDateChange(e.target.value)}
+              onChange={(e) => handleVisitDateChange(e.target.value)}
               className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             />
           </div>
@@ -239,12 +229,12 @@ export function ShortlistTracker({ listingId }: ShortlistTrackerProps) {
               onChange={(e) => setNotes(e.target.value)}
               onBlur={() => void handleSaveNotes()}
               placeholder="e.g. Deposit is 40k. Landlord matches my vibe. Moving date negotiable..."
-              className="flex min-h-[70px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-y"
+              className="flex min-h-17.5 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-y"
             />
             <div className="flex justify-end">
-              <Button 
-                size="sm" 
-                variant="outline" 
+              <Button
+                size="sm"
+                variant="outline"
                 onClick={() => void handleSaveNotes()}
                 className="h-7 text-xs px-2.5"
               >
