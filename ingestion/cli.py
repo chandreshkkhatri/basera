@@ -49,6 +49,13 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze = sub.add_parser("analyze", help="LLM-analyze unprocessed raw posts")
     analyze.add_argument("--workers", type=int)
 
+    diag = sub.add_parser(
+        "diagnose-urls",
+        help="probe why browser post-URL extraction misses (writes artifacts)",
+    )
+    diag.add_argument("--group", type=str, required=True, help="group URL to probe")
+    diag.add_argument("--posts", type=int, default=8, help="posts to probe")
+
     backfill = sub.add_parser("backfill", help="import scraper/results/*.json")
     backfill.add_argument("--results-dir", default="scraper/results")
 
@@ -174,6 +181,12 @@ def _cmd_run(args, settings) -> int:
 
     alerter.flush_pending()
     return worst_rc
+
+
+def _cmd_diagnose_urls(args, settings) -> int:
+    from .scripts.diagnose_urls import diagnose
+
+    return diagnose(settings, args.group, args.posts)
 
 
 def _cmd_analyze(args, settings) -> int:
@@ -411,6 +424,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_run(args, settings)
     if args.command == "analyze":
         return _cmd_analyze(args, settings)
+    if args.command == "diagnose-urls":
+        return _cmd_diagnose_urls(args, settings)
     if args.command == "backfill":
         return _cmd_backfill(args, settings)
     if args.command == "reclassify":
