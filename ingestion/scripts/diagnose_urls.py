@@ -40,13 +40,15 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
     outdir = settings.state_path / "diagnostics"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    graphql = {"responses": 0, "with_permalink": 0, "with_post_id": 0}
-    sample_saved = {"done": False}
+    graphql = {"responses": 0, "with_permalink": 0, "with_post_id": 0, "with_message": 0}
+    biggest = {"size": 0}
+    gql_log: list[dict] = []
 
     src._setup_playwright()
     page = src.page
 
-    # (D) Capture GraphQL feed responses and check for permalink/post_id.
+    # (D) Inspect every GraphQL response; the feed payload is the big one with
+    # message text — save the largest so we can see how post links appear.
     def on_response(resp) -> None:
         try:
             if "graphql" not in resp.url:
@@ -57,13 +59,23 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
         graphql["responses"] += 1
         has_permalink = bool(_PERMALINK_RE.search(body)) or "permalink_url" in body
         has_post_id = '"post_id"' in body or "story_fbid" in body
+        has_message = '"message":{"' in body or '"message":{' in body
         if has_permalink:
             graphql["with_permalink"] += 1
         if has_post_id:
             graphql["with_post_id"] += 1
-        if (has_permalink or has_post_id) and not sample_saved["done"]:
-            (outdir / "graphql_sample.json").write_text(body[:300_000], encoding="utf-8")
-            sample_saved["done"] = True
+        if has_message:
+            graphql["with_message"] += 1
+        gql_log.append({
+            "bytes": len(body),
+            "permalink": has_permalink,
+            "post_id": has_post_id,
+            "message": has_message,
+        })
+        # Keep the largest body carrying message text — almost certainly the feed.
+        if has_message and len(body) > biggest["size"]:
+            biggest["size"] = len(body)
+            (outdir / "graphql_feed.json").write_text(body[:600_000], encoding="utf-8")
 
     page.on("response", on_response)
 
@@ -76,7 +88,13 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
             return 1
         src._switch_to_new_listings()
 
-        for _ in range(4):
+        # Wait for the feed to actually hydrate (the real loop is patient too),
+        # then scroll to pull a few batches + their GraphQL responses.
+        try:
+            page.wait_for_selector(POST_SELECTOR, timeout=25_000)
+        except Exception:  # noqa: BLE001
+            log.warning("POST_SELECTOR never appeared within 25s (feed variant?)")
+        for _ in range(5):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             page.wait_for_timeout(2500)
 
@@ -201,9 +219,16 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
         log.info("C html permalinks in posts: %d | page-level: permalinks=%d story.php=%d",
                  total("html_permalinks"), page_permalinks, page_stories)
         log.info(
-            "D graphql responses=%d with_permalink=%d with_post_id=%d",
-            graphql["responses"], graphql["with_permalink"], graphql["with_post_id"],
+            "D graphql responses=%d with_permalink=%d with_post_id=%d with_message=%d",
+            graphql["responses"], graphql["with_permalink"],
+            graphql["with_post_id"], graphql["with_message"],
         )
+        top = sorted(gql_log, key=lambda r: r["bytes"], reverse=True)[:5]
+        for r in top:
+            log.info("  gql %7d bytes  permalink=%s post_id=%s message=%s",
+                     r["bytes"], r["permalink"], r["post_id"], r["message"])
+        summary["graphql_responses"] = gql_log
+        (outdir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         log.info("Artifacts: %s", outdir)
         return 0
     finally:
