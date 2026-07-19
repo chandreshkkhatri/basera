@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # Post-URL extraction ladder. Facebook only materializes permalink <a>
     # hrefs on hover, so extraction is interactive and costs time per post —
     # an accepted tradeoff (missing links make listings hard to reach).
+    # Permalink anchors hydrate a beat after scroll-into-view, so poll the fast
+    # path before escalating to hover/click (≈ attempts × interval budget).
+    url_poll_attempts: int = 6
+    url_poll_interval_ms: int = 300
     url_hover_max_candidates: int = 3     # timestamp-ish nodes to hover per post
     url_hover_wait_ms: int = 500          # settle time after each hover
     url_click_fallback: bool = True       # last resort: click + read page.url

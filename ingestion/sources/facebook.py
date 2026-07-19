@@ -539,15 +539,19 @@ class FacebookSource:
         return normalize_post_url(url)
 
     def _post_url_aggressive(self, post) -> str:
-        """Escalation ladder for the post permalink. Facebook renders the
-        timestamp as a bare role=link node and only materializes the real
-        <a href=…> ON HOVER, so steps 2+ interact with the page — slower per
-        post, which is the accepted tradeoff for actually having links.
-        1. fast selector pass  2. hover timestamps, rescan anchors
-        3. regex the raw HTML  4. click-through and read the URL (capped)."""
-        url = self._post_url(post)
-        if url:
-            return url
+        """Escalation ladder for the post permalink. Facebook lazy-hydrates the
+        permalink anchor a beat AFTER the post scrolls into view (a diagnostic
+        showed 6/8 posts carry the anchor once given time), so:
+        1. poll the fast selector pass for a short window  2. hover timestamps,
+        rescan anchors  3. regex the raw HTML  4. click-through (capped)."""
+        # 1. Poll — the anchor usually appears within a second or two; a single
+        #    check right after scroll-into-view misses it (the old bug).
+        for attempt in range(self.settings.url_poll_attempts):
+            url = self._post_url(post)
+            if url:
+                return url
+            if attempt < self.settings.url_poll_attempts - 1:
+                self.page.wait_for_timeout(self.settings.url_poll_interval_ms)
 
         hovered = self._hover_timestamps(post)
         if hovered:
