@@ -32,7 +32,15 @@ const PoiMapPickerInner = dynamic(
 // Pune — a reasonable default focus before the user has picked anything.
 const DEFAULT_CENTER = { lat: 18.5204, lng: 73.8567 };
 
-type GeocodeResult = { label: string; display: string; lat: number; lng: number };
+// Google predictions carry a placeId (coords resolved on select); Nominatim
+// results carry coords directly.
+type GeocodeResult = {
+  label: string;
+  display: string;
+  lat?: number;
+  lng?: number;
+  placeId?: string;
+};
 
 /**
  * Sets the user's point of interest. Three ways in: search a place name
@@ -96,6 +104,9 @@ function PoiPickerBody({
   // The query value we just set from picking a result — don't re-search it,
   // which would reopen the dropdown on top of the controls below.
   const pickedQuery = useRef<string | null>(null);
+  // Groups a burst of autocomplete keystrokes + the final details lookup into
+  // one billable Google session; reset after each selection.
+  const sessionToken = useRef<string | null>(null);
 
   // Debounced place search. All state writes happen inside the timer callback
   // (never synchronously in the effect body).
@@ -111,7 +122,9 @@ function PoiPickerBody({
       setSearching(true);
       setError(null);
       try {
-        const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, {
+        if (!sessionToken.current) sessionToken.current = crypto.randomUUID();
+        const params = new URLSearchParams({ q, sessionToken: sessionToken.current });
+        const res = await fetch(`/api/geocode?${params}`, {
           signal: ctrl.signal,
         });
         if (!res.ok) throw new Error("failed");
@@ -140,12 +153,35 @@ function PoiPickerBody({
     }
   }, []);
 
-  const pickResult = (r: GeocodeResult) => {
-    setPending({ lat: r.lat, lng: r.lng });
-    setLabel(r.label);
+  const pickResult = async (r: GeocodeResult) => {
     setResults([]);
+    setLabel(r.label);
     pickedQuery.current = r.label;
     setQuery(r.label);
+
+    if (r.lat != null && r.lng != null) {
+      setPending({ lat: r.lat, lng: r.lng });
+      sessionToken.current = null;
+      return;
+    }
+    if (!r.placeId) return;
+
+    // Google prediction: resolve coordinates via Place Details.
+    setSearching(true);
+    try {
+      const params = new URLSearchParams({ placeId: r.placeId });
+      if (sessionToken.current) params.set("sessionToken", sessionToken.current);
+      const res = await fetch(`/api/geocode?${params}`);
+      if (!res.ok) throw new Error("details failed");
+      const d = (await res.json()) as { lat: number; lng: number; label?: string };
+      setPending({ lat: d.lat, lng: d.lng });
+      if (d.label) setLabel(d.label);
+    } catch {
+      setError("Couldn't resolve that place — try another or tap the map.");
+    } finally {
+      setSearching(false);
+      sessionToken.current = null; // close the billing session
+    }
   };
 
   const onMapPick = useCallback(
@@ -211,10 +247,10 @@ function PoiPickerBody({
         {results.length > 0 && (
           <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-popover shadow-lg">
             {results.map((r, i) => (
-              <li key={`${r.lat},${r.lng},${i}`}>
+              <li key={r.placeId ?? `${r.lat},${r.lng},${i}`}>
                 <button
                   type="button"
-                  onClick={() => pickResult(r)}
+                  onClick={() => void pickResult(r)}
                   className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-muted"
                 >
                   <MapPin className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
