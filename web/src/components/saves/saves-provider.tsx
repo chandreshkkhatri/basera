@@ -14,17 +14,40 @@ import {
   doc,
   onSnapshot,
   setDoc,
+  updateDoc,
+  deleteField,
 } from "firebase/firestore";
 import { useAuth } from "@/components/auth/auth-provider";
 import { firebaseEnabled, getFirebase } from "@/lib/firebase";
 
 const STORAGE_KEY = "basera:saves";
 
+export type ShortlistStatus =
+  | "shortlisted"
+  | "contacted"
+  | "scheduled"
+  | "visited"
+  | "applied"
+  | "booked"
+  | "declined";
+
+export interface ShortlistItemMetadata {
+  status: ShortlistStatus;
+  notes?: string;
+  visitDate?: string;
+  contactedAt?: string;
+  visitedAt?: string;
+  bookedAt?: string;
+  updatedAt?: string;
+}
+
 type SavesContext = {
   savedIds: ReadonlySet<number>;
+  metadata: Record<number, ShortlistItemMetadata>;
   ready: boolean;
   isSaved: (id: number) => boolean;
   toggleSave: (id: number) => void;
+  updateMetadata: (id: number, updates: Partial<ShortlistItemMetadata>) => Promise<void>;
 };
 
 const Ctx = createContext<SavesContext | null>(null);
@@ -56,6 +79,7 @@ function writeLocal(ids: number[]) {
 export function SavesProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
+  const [metadata, setMetadata] = useState<Record<number, ShortlistItemMetadata>>({});
   const [ready, setReady] = useState(false);
 
   const cloud = firebaseEnabled && !!user;
@@ -65,7 +89,14 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (cloud) return;
     const t = window.setTimeout(() => {
-      setSavedIds(new Set(readLocal()));
+      const ids = readLocal();
+      setSavedIds(new Set(ids));
+      
+      const localMeta: Record<number, ShortlistItemMetadata> = {};
+      for (const id of ids) {
+        localMeta[id] = { status: "shortlisted" };
+      }
+      setMetadata(localMeta);
       setReady(true);
     }, 0);
     return () => window.clearTimeout(t);
@@ -88,8 +119,19 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
     const unsub = onSnapshot(
       ref,
       (snap) => {
-        const ids = (snap.data()?.ids ?? []) as number[];
+        const data = snap.data();
+        const ids = (data?.ids ?? []) as number[];
+        const meta = (data?.metadata ?? {}) as Record<number, ShortlistItemMetadata>;
         setSavedIds(new Set(ids.filter((v) => Number.isInteger(v))));
+        
+        // Clean up metadata to only include keys present in ids
+        const cleanedMeta: Record<number, ShortlistItemMetadata> = {};
+        for (const id of ids) {
+          if (Number.isInteger(id)) {
+            cleanedMeta[id] = meta[id] ?? { status: "shortlisted" };
+          }
+        }
+        setMetadata(cleanedMeta);
         setReady(true);
       },
       () => setReady(true),
@@ -105,14 +147,45 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
       else next.add(id);
       setSavedIds(next); // optimistic
 
+      if (has) {
+        setMetadata((prev) => {
+          const nextMeta = { ...prev };
+          delete nextMeta[id];
+          return nextMeta;
+        });
+      } else {
+        setMetadata((prev) => ({
+          ...prev,
+          [id]: { status: "shortlisted", updatedAt: new Date().toISOString() },
+        }));
+      }
+
       if (cloud && user) {
         const fb = getFirebase();
         if (fb) {
-          void setDoc(
-            doc(fb.db, "saves", user.uid),
-            { ids: has ? arrayRemove(id) : arrayUnion(id) },
-            { merge: true },
-          ).catch(() => {});
+          if (has) {
+            void updateDoc(doc(fb.db, "saves", user.uid), {
+              ids: arrayRemove(id),
+              [`metadata.${id}`]: deleteField(),
+            }).catch(() => {
+              void setDoc(
+                doc(fb.db, "saves", user.uid),
+                { ids: arrayRemove(id) },
+                { merge: true }
+              ).catch(() => {});
+            });
+          } else {
+            void setDoc(
+              doc(fb.db, "saves", user.uid),
+              {
+                ids: arrayUnion(id),
+                metadata: {
+                  [id]: { status: "shortlisted", updatedAt: new Date().toISOString() }
+                }
+              },
+              { merge: true },
+            ).catch(() => {});
+          }
         }
       } else {
         writeLocal([...next]);
@@ -121,11 +194,61 @@ export function SavesProvider({ children }: { children: React.ReactNode }) {
     [savedIds, cloud, user],
   );
 
+  const updateMetadata = useCallback(
+    async (id: number, updates: Partial<ShortlistItemMetadata>) => {
+      if (!savedIds.has(id)) return;
+
+      const current = metadata[id] ?? { status: "shortlisted" };
+      const updatedItem: ShortlistItemMetadata = {
+        ...current,
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (updates.status) {
+        if (updates.status === "contacted" && !updatedItem.contactedAt) {
+          updatedItem.contactedAt = new Date().toISOString();
+        }
+        if (updates.status === "visited" && !updatedItem.visitedAt) {
+          updatedItem.visitedAt = new Date().toISOString();
+        }
+        if (updates.status === "booked" && !updatedItem.bookedAt) {
+          updatedItem.bookedAt = new Date().toISOString();
+        }
+      }
+
+      setMetadata((prev) => ({
+        ...prev,
+        [id]: updatedItem,
+      }));
+
+      if (cloud && user) {
+        const fb = getFirebase();
+        if (fb) {
+          try {
+            await setDoc(
+              doc(fb.db, "saves", user.uid),
+              {
+                metadata: {
+                  [id]: updatedItem,
+                },
+              },
+              { merge: true },
+            );
+          } catch (e) {
+            console.error("Failed to update metadata in Firestore:", e);
+          }
+        }
+      }
+    },
+    [savedIds, metadata, cloud, user],
+  );
+
   const isSaved = useCallback((id: number) => savedIds.has(id), [savedIds]);
 
   const value = useMemo(
-    () => ({ savedIds, ready, isSaved, toggleSave }),
-    [savedIds, ready, isSaved, toggleSave],
+    () => ({ savedIds, metadata, ready, isSaved, toggleSave, updateMetadata }),
+    [savedIds, metadata, ready, isSaved, toggleSave, updateMetadata],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

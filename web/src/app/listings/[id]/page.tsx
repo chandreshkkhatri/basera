@@ -8,6 +8,7 @@ import { PostedAgo } from "@/components/posted-ago";
 import { ContactButton } from "@/components/contact-button";
 import { DistanceChip } from "@/components/distance-chip";
 import { SaveButton } from "@/components/saves/save-button";
+import { ShortlistTracker } from "@/components/saves/shortlist-tracker";
 import { SearchTerms } from "@/components/search-terms";
 import { ShareButton } from "@/components/share-button";
 import { ListingMedia } from "@/components/listing-media";
@@ -138,6 +139,8 @@ export default async function ListingDetailPage({
           This post may no longer be available. The original link may still work.
         </div>
       )}
+
+      <ShortlistTracker listingId={listing.id} />
 
       <div className="rounded-xl border p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
