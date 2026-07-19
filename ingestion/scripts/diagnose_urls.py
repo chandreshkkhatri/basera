@@ -163,6 +163,15 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
                     continue
             hrefs_after = post_hrefs()
 
+            # Measure the shipped fix: poll the REAL fast path like
+            # _post_url_aggressive now does (no navigation).
+            polled = ""
+            for _ in range(settings.url_poll_attempts):
+                polled = src._post_url(post)
+                if polled:
+                    break
+                page.wait_for_timeout(settings.url_poll_interval_ms)
+
             try:
                 html = post.inner_html()
             except Exception:  # noqa: BLE001
@@ -175,6 +184,7 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
                 "post_hrefs_before": hrefs_before,
                 "post_hrefs_after_hover": hrefs_after,
                 "hovered": hovered,
+                "polled_fast_path": bool(polled),
                 "html_permalinks": len(_permalinks_in_html(html)),
             }
             rows.append(rec)
@@ -210,7 +220,9 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
         }
         (outdir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
+        polled_hits = sum(1 for r in rows if r["polled_fast_path"])
         log.info("=== SUMMARY (%d posts) ===", len(rows))
+        log.info("FIX polled-fast-path hits: %d / %d posts", polled_hits, len(rows))
         log.info("A timestamp matches (total): %d", total("timestamp_matches"))
         log.info(
             "B post anchors before/after hover (total): %d / %d",
