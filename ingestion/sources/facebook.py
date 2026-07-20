@@ -24,6 +24,8 @@ from playwright.sync_api import sync_playwright
 from ..config import Settings
 from ..models import RawPost
 from .base import SourceLoginError
+from .fb_graphql import StoryIndex
+from .fb_urls import normalize_post_url, post_id_from_url
 
 log = logging.getLogger(__name__)
 
@@ -59,29 +61,14 @@ def safe_group_dir_name(group_url_or_name: str) -> str:
 
 
 def generate_post_id(post_url: str, text: str) -> str:
-    if post_url:
-        m = re.search(r"/posts/(\d+)", post_url)
-        if m:
-            return f"fb_post_{m.group(1)}"
-        m2 = re.search(r"story_fbid=(\d+)", post_url)
-        if m2:
-            return f"fb_post_{m2.group(1)}"
+    # A real numeric id (from /posts/, /permalink/, or story_fbid) gives a
+    # stable id that dedups the same post across DOM and GraphQL captures.
+    pid = post_id_from_url(post_url)
+    if pid:
+        return f"fb_post_{pid}"
     clean = "".join(text.split())
     digest = hashlib.md5(clean.encode("utf-8")).hexdigest()
     return f"fb_hash_{digest[:16]}"
-
-
-def normalize_post_url(url: str) -> str:
-    if not url:
-        return url
-    m = re.search(r"(https://www\.facebook\.com/groups/[^/]+/posts/\d+)", url)
-    if m:
-        return m.group(1) + "/"
-    m2 = re.search(r"story\.php\?story_fbid=(\d+)&id=(\d+)", url)
-    if m2:
-        post_id, group_id = m2.group(1), m2.group(2)
-        return f"https://www.facebook.com/groups/{group_id}/posts/{post_id}/"
-    return url
 
 
 def _is_post_href(href: str) -> bool:
@@ -220,6 +207,8 @@ class FacebookSource:
         self.context = None
         self._clicks_used = 0
         self.page = None
+        # Populated in _setup_playwright when GraphQL interception is enabled.
+        self._story_index: Optional[StoryIndex] = None
 
     # -- entry -----------------------------------------------------------
     def iter_posts(
@@ -364,11 +353,33 @@ class FacebookSource:
                         log.debug("prepare element failed: %s", e)
                         continue
 
-                    data = self._extract_post(post) or {}
-                    url = data.get("post_url") or post_url
-                    text = " ".join(data.get("text", "").split())
-                    if not text:
+                    graphql_on = self._story_index is not None
+                    data = self._extract_post(post, resolve_url=not graphql_on) or {}
+                    dom_text = " ".join(data.get("text", "").split())
+                    if not dom_text:
                         continue
+
+                    # Primary: a GraphQL story (permalink + exact time + full
+                    # text + author). Fallback: the DOM extraction path.
+                    story = self._match_story(dom_text, post_url) if graphql_on else None
+                    if story:
+                        url = story.url
+                        text = " ".join((story.text or dom_text).split())
+                        posted_at = story.creation_time or data.get("timestamp")
+                        author_name = story.author_name or data.get("author_name")
+                        url_source = "graphql"
+                    else:
+                        url = (
+                            self._post_url_aggressive(post)
+                            if graphql_on
+                            else data.get("post_url")
+                        ) or post_url
+                        text = dom_text
+                        posted_at = data.get("timestamp")
+                        author_name = data.get("author_name")
+                        url_source = "dom" if url else "none"
+
+                    url = normalize_post_url(url) if url else ""
                     message_id = generate_post_id(url, text)
                     if message_id in seen_in_run:
                         continue
@@ -377,9 +388,14 @@ class FacebookSource:
                     # Last resort: rebuild the permalink from the post id when
                     # direct extraction failed but the id is real.
                     if not url:
-                        url = reconstruct_post_url(group, message_id) or ""
+                        rebuilt = reconstruct_post_url(group, message_id)
+                        if rebuilt:
+                            url = rebuilt
+                            url_source = "reconstructed"
 
-                    meta = {"mode": "browser"}
+                    meta = {"mode": "browser", "url_source": url_source}
+                    if story is not None and story.author_id:
+                        meta["author_id"] = story.author_id
                     if s.save_html:
                         html_path = html_dir / f"{message_id}.html"
                         self._save_html(post, html_path)
@@ -390,10 +406,10 @@ class FacebookSource:
                         source=self.name,
                         source_id=message_id,
                         text=text,
-                        posted_at=data.get("timestamp"),
+                        posted_at=posted_at,
                         source_group=group,
                         source_url=url or None,
-                        author_name=data.get("author_name"),
+                        author_name=author_name,
                         author_url=url or None,
                         meta=meta,
                     )
@@ -432,6 +448,13 @@ class FacebookSource:
             browser = self.playwright.chromium.launch(args=args, **launch_options)
             self.context = browser.new_context()
             self.page = self.context.new_page()
+
+        # Primary post-URL source: intercept the feed's GraphQL responses (they
+        # carry the permalink + time + text + author per story). The DOM ladder
+        # stays as fallback; a kill-switch disables this entirely.
+        if s.graphql_interception_enabled:
+            self._story_index = StoryIndex(max_stories=s.graphql_max_stories)
+            self.page.on("response", self._on_graphql_response)
 
     def _login(self) -> bool:
         self.page.goto("https://www.facebook.com")
@@ -647,7 +670,42 @@ class FacebookSource:
                 log.debug("go_back after click failed: %s", e)
         return captured
 
-    def _extract_post(self, post) -> Optional[dict]:
+    def _on_graphql_response(self, resp) -> None:
+        """Index any post stories in a feed GraphQL response. Best-effort: bodies
+        aren't always readable, and parsing never raises."""
+        if self._story_index is None:
+            return
+        try:
+            if "graphql" not in resp.url:
+                return
+            body = resp.text()
+        except Exception:  # noqa: BLE001 — body unavailable for some responses
+            return
+        # Cheap guard before handing the (large) body to the parser.
+        if '"message"' not in body and "wwwURL" not in body:
+            return
+        try:
+            self._story_index.add_response(body)
+        except Exception as e:  # noqa: BLE001
+            log.debug("graphql index failed: %s", e)
+
+    def _match_story(self, text: str, post_url: str):
+        """Correlate a DOM post to a captured GraphQL story, polling briefly so a
+        response still in flight has time to arrive. Returns a GraphStory or
+        None (→ DOM fallback)."""
+        if self._story_index is None:
+            return None
+        story = self._story_index.match(text, post_url)
+        if story:
+            return story
+        for _ in range(self.settings.url_poll_attempts):
+            self.page.wait_for_timeout(self.settings.url_poll_interval_ms)
+            story = self._story_index.match(text, post_url)
+            if story:
+                return story
+        return None
+
+    def _extract_post(self, post, resolve_url: bool = True) -> Optional[dict]:
         try:
             # Expand "See more".
             try:
@@ -705,7 +763,9 @@ class FacebookSource:
             return {
                 "text": post_text,
                 "timestamp": timestamp,
-                "post_url": self._post_url_aggressive(post),
+                # Skip the expensive DOM URL ladder when the caller will resolve
+                # the URL from GraphQL instead (only run it on the fallback path).
+                "post_url": self._post_url_aggressive(post) if resolve_url else "",
                 "author_name": author_name,
             }
         except Exception as e:  # noqa: BLE001

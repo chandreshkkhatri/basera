@@ -161,6 +161,9 @@ class RunStats:
     # New posts captured WITHOUT a direct post URL — the capture-rate signal
     # for the interactive URL-extraction ladder in sources/facebook.py.
     url_missing: int = 0
+    # New posts whose URL came from GraphQL interception (vs the DOM ladder) —
+    # measures how much the interception path is carrying.
+    url_from_graphql: int = 0
     listings_upserted: int = 0
     # Not persisted (finish_run reads only the counters); lets the analyze
     # path report a quota stop to the CLI so the runner can cool down.
@@ -173,6 +176,7 @@ class RunStats:
             f"extract_failed={self.extraction_failed} "
             f"geocode_failed={self.geocode_failed} "
             f"url_missing={self.url_missing} "
+            f"url_from_graphql={self.url_from_graphql} "
             f"upserted={self.listings_upserted}"
         )
 

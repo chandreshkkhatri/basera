@@ -201,6 +201,8 @@ def run_source(
                 stats.posts_new += 1
                 if not post.source_url:
                     stats.url_missing += 1
+                elif (post.meta or {}).get("url_source") == "graphql":
+                    stats.url_from_graphql += 1
             if scrape_only:
                 continue
             try:

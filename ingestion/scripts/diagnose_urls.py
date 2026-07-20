@@ -30,6 +30,7 @@ from ..sources.facebook import (
     _permalinks_in_html,
     FacebookSource,
 )
+from ..sources.fb_graphql import StoryIndex
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
     graphql = {"responses": 0, "with_permalink": 0, "with_post_id": 0, "with_message": 0}
     biggest = {"size": 0}
     gql_log: list[dict] = []
+    # The production interception path: parse stories out of the same responses.
+    index = StoryIndex()
 
     src._setup_playwright()
     page = src.page
@@ -76,6 +79,11 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
         if has_message and len(body) > biggest["size"]:
             biggest["size"] = len(body)
             (outdir / "graphql_feed.json").write_text(body[:600_000], encoding="utf-8")
+        # Feed the production parser so we can report its real resolution.
+        try:
+            index.add_response(body)
+        except Exception as e:  # noqa: BLE001
+            log.debug("index add failed: %s", e)
 
     page.on("response", on_response)
 
@@ -172,6 +180,16 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
                     break
                 page.wait_for_timeout(settings.url_poll_interval_ms)
 
+            # (D') The production GraphQL path: does an intercepted story resolve
+            # this post (by id from the fast path, else by normalised text)?
+            gstory = None
+            try:
+                dom = src._extract_post(post, resolve_url=False) or {}
+                dom_text = " ".join(dom.get("text", "").split())
+                gstory = index.match(dom_text, polled) if dom_text else None
+            except Exception:  # noqa: BLE001
+                pass
+
             try:
                 html = post.inner_html()
             except Exception:  # noqa: BLE001
@@ -185,6 +203,8 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
                 "post_hrefs_after_hover": hrefs_after,
                 "hovered": hovered,
                 "polled_fast_path": bool(polled),
+                "graphql_resolved": bool(gstory),
+                "graphql_url": gstory.url if gstory else "",
                 "html_permalinks": len(_permalinks_in_html(html)),
             }
             rows.append(rec)
@@ -221,8 +241,13 @@ def diagnose(settings: Settings, group: str, posts: int) -> int:
         (outdir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
         polled_hits = sum(1 for r in rows if r["polled_fast_path"])
+        graphql_hits = sum(1 for r in rows if r["graphql_resolved"])
         log.info("=== SUMMARY (%d posts) ===", len(rows))
         log.info("FIX polled-fast-path hits: %d / %d posts", polled_hits, len(rows))
+        log.info(
+            "GRAPHQL stories parsed: %d | resolved posts: %d / %d",
+            len(index), graphql_hits, len(rows),
+        )
         log.info("A timestamp matches (total): %d", total("timestamp_matches"))
         log.info(
             "B post anchors before/after hover (total): %d / %d",

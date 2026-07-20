@@ -142,9 +142,11 @@ class TestPermalinksInHtml:
         ]
 
     def test_relative_permalink_form(self):
+        # /permalink/<id> now canonicalises to the /posts/<id> form so a post
+        # seen via the DOM and via GraphQL (which uses permalink URLs) dedup.
         html = '<a href="/groups/12345/permalink/67890/">link</a>'
         assert _permalinks_in_html(html) == [
-            "https://www.facebook.com/groups/12345/permalink/67890"
+            "https://www.facebook.com/groups/12345/posts/67890/"
         ]
 
     def test_story_fbid_with_entity_escaped_amp(self):

@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     url_click_fallback: bool = True       # last resort: click + read page.url
     url_click_max_per_run: int = 25       # cap slow click-throughs per run
     url_click_wait_ms: int = 3000         # max wait for the SPA nav to happen
+    # Primary post-URL source: parse the feed's GraphQL responses (permalink +
+    # exact time + full text + author) and fall back to the DOM ladder above.
+    # Kill-switch: set false to disable interception and use the DOM path only.
+    graphql_interception_enabled: bool = True
+    graphql_max_stories: int = 2000       # cap indexed stories per run (memory)
     max_scroll_time_s: int = 300          # facebook_bot.py:670
     scroll_pause_ms: int = 2000           # facebook_bot.py:279
     fb_batch_size: int = 10               # facebook_bot.py:735
