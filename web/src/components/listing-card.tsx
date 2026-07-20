@@ -20,8 +20,13 @@ export function ListingCard({ listing }: { listing: ListingRow }) {
   return (
     <Link
       href={`/listings/${listing.id}`}
-      className="group flex flex-col overflow-hidden rounded-xl border bg-card transition-colors hover:border-brand/50"
+      className="group relative flex flex-col overflow-hidden rounded-xl border bg-card transition-all duration-150 hover:-translate-y-0.5 hover:border-brand/50 hover:shadow-lg"
     >
+      {/* Signature: a brand left-spine that lights up on hover. */}
+      <span
+        aria-hidden
+        className="absolute inset-y-0 left-0 z-10 w-0.5 bg-brand opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+      />
       <div className="relative aspect-16/10 overflow-hidden">
         <ListingMedia source={listing.source} glyphClassName="text-6xl" />
         <SourceBadge source={listing.source} className="absolute top-2 right-2" />
@@ -31,7 +36,7 @@ export function ListingCard({ listing }: { listing: ListingRow }) {
       <div className="flex flex-1 flex-col gap-2.5 p-4">
         <div>
           {rent ? (
-            <p className="font-display text-2xl font-bold tracking-tight">
+            <p className="font-display text-2xl font-bold tracking-tight text-highlight tabular-nums">
               {rent}
               <span className="ml-0.5 text-sm font-medium text-muted-foreground">
                 /mo

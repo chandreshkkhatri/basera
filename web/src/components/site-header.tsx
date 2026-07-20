@@ -38,11 +38,12 @@ export function SiteHeader({ cities }: { cities: City[] }) {
             <Link
               key={n.href}
               href={n.href}
+              aria-current={isActive(n.href) ? "page" : undefined}
               className={cn(
                 "rounded-md px-2.5 py-1.5 transition-colors",
                 isActive(n.href)
-                  ? "bg-muted font-medium text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
+                  ? "bg-accent font-medium text-accent-foreground"
+                  : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
               )}
             >
               {n.label}

@@ -102,10 +102,10 @@ export default async function ListingDetailPage({
         <span className="text-sm text-muted-foreground">
           Posted <PostedAgo date={listing.postedAt} />
         </span>
-        <h1 className="mt-1 font-display text-3xl font-bold tracking-tight">
+        <h1 className="mt-1 font-display text-3xl font-bold tracking-tight tabular-nums">
           {rent ? (
             <>
-              {rent}
+              <span className="text-highlight">{rent}</span>
               <span className="ml-1 text-lg font-medium text-muted-foreground">
                 /mo
               </span>

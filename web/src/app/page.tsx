@@ -73,11 +73,13 @@ export default async function FeedPage({ searchParams }: PageProps<"/">) {
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
           Rentals in {city.name}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          {total.toLocaleString("en-IN")}{" "}
+          <span className="font-medium tabular-nums text-foreground">
+            {total.toLocaleString("en-IN")}
+          </span>{" "}
           {total === 1 ? "listing" : "listings"} aggregated from Facebook groups
           in {city.name}.
         </p>
