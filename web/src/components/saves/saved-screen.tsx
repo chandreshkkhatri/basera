@@ -232,7 +232,7 @@ export function SavedScreen() {
                         <div>
                           <div className="flex flex-wrap items-baseline gap-2 justify-between md:justify-start">
                             {rent ? (
-                              <p className="font-display text-xl font-bold tracking-tight">
+                              <p className="font-display text-xl font-bold tracking-tight text-highlight tabular-nums">
                                 {rent}
                                 <span className="ml-0.5 text-xs font-normal text-muted-foreground">/mo</span>
                               </p>

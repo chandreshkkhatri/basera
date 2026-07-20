@@ -12,7 +12,9 @@ import { cn } from "@/lib/utils";
 const itemClass = (active: boolean) =>
   cn(
     "flex h-full flex-col items-center justify-center gap-0.5 text-[0.7rem] font-medium transition-colors",
-    active ? "text-brand" : "text-muted-foreground hover:text-foreground",
+    active
+      ? "text-brand shadow-[inset_0_2px_0_0_var(--brand)]"
+      : "text-muted-foreground hover:text-foreground",
   );
 
 /**

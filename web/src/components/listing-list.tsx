@@ -87,10 +87,10 @@ function ListingTableRow({ listing }: { listing: ListingRow }) {
 
   return (
     <TableRow className="relative cursor-pointer">
-      <TableCell className="font-display font-semibold">
+      <TableCell className="font-display font-semibold tabular-nums">
         <Link
           href={`/listings/${listing.id}`}
-          className="text-foreground after:absolute after:inset-0"
+          className="text-highlight after:absolute after:inset-0"
         >
           {rent ?? "Rent n/a"}
         </Link>
@@ -151,7 +151,7 @@ function ListingRow({ listing }: { listing: ListingRow }) {
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex items-baseline justify-between gap-2">
           {rent ? (
-            <p className="font-display text-lg font-bold tracking-tight">
+            <p className="font-display text-lg font-bold tracking-tight text-highlight tabular-nums">
               {rent}
               <span className="ml-0.5 text-xs font-medium text-muted-foreground">
                 /mo
