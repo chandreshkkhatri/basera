@@ -4,9 +4,7 @@
  * search when we couldn't capture (or you don't trust) the direct link.
  * Deterministic — works retroactively for every stored listing.
  */
-
-// Indian mobile numbers, tolerant of +91 prefix and space/dash separators.
-const PHONE_RE = /(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/;
+import { PHONE_RE } from "@/lib/phone";
 
 const MAX_TERMS = 3;
 const MAX_WORDS = 8;

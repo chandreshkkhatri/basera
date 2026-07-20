@@ -14,6 +14,8 @@
   --color-brand-foreground: var(--brand-foreground);
   --color-highlight: var(--highlight);
   --color-highlight-foreground: var(--highlight-foreground);
+  --color-whatsapp: var(--whatsapp);
+  --color-whatsapp-foreground: var(--whatsapp-foreground);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
@@ -89,6 +91,9 @@
   --brand-foreground: oklch(0.99 0.01 293);
   --highlight: oklch(0.63 0.16 64);
   --highlight-foreground: oklch(0.99 0.02 80);
+  /* WhatsApp brand green — fixed across themes; paired with white text. */
+  --whatsapp: oklch(0.6 0.16 152);
+  --whatsapp-foreground: oklch(0.99 0 0);
   --success: oklch(0.55 0.14 150);
   --warning: oklch(0.62 0.15 70);
   --info: oklch(0.55 0.19 250);

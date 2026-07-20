@@ -11,11 +11,15 @@ import { SaveButton } from "@/components/saves/save-button";
 import { ShortlistTracker } from "@/components/saves/shortlist-tracker";
 import { SearchTerms } from "@/components/search-terms";
 import { ShareButton } from "@/components/share-button";
+import { WhatsAppContact } from "@/components/whatsapp-contact";
 import { ListingMedia } from "@/components/listing-media";
 import { MiniMap } from "@/components/map/mini-map";
 import { Badge } from "@/components/ui/badge";
 import { formatRent, formatRentAmount } from "@/lib/format";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
+import { extractPhone, whatsappHref } from "@/lib/phone";
+import { qrCodeSvg } from "@/lib/qr";
+import { siteUrl } from "@/lib/site";
 
 function isUrl(s: string | null): boolean {
   return !!s && /^https?:\/\//.test(s);
@@ -71,6 +75,21 @@ export default async function ListingDetailPage({
     [listing.location, listing.city].filter(Boolean).join(", ") ||
     "Location unknown";
   const furnishing = furnishingLabel(listing.furnishingStatus);
+
+  // The poster's number lives inline in the post text (no dedicated column).
+  // When present, offer a WhatsApp click-to-chat plus a scannable QR of it.
+  const phone = extractPhone(listing.originalText);
+  let whatsapp: { href: string; qrSvg: string; display: string } | null = null;
+  if (phone) {
+    const url = new URL(`/listings/${listing.id}`, siteUrl()).toString();
+    const message =
+      `Hi! I saw your rental listing` +
+      (listing.bhk ? ` (${listing.bhk})` : "") +
+      (place !== "Location unknown" ? ` in ${place}` : "") +
+      ` on Basera and I'm interested. Is it still available?\n${url}`;
+    const href = whatsappHref(phone.e164, message);
+    whatsapp = { href, qrSvg: await qrCodeSvg(href), display: phone.display };
+  }
 
   const rows: [string, string | null][] = [
     ["Rent", formatRent(listing.rent)],
@@ -168,6 +187,14 @@ export default async function ListingDetailPage({
         ) : null}
         <SearchTerms text={listing.originalText} />
       </div>
+
+      {whatsapp && (
+        <WhatsAppContact
+          href={whatsapp.href}
+          qrSvg={whatsapp.qrSvg}
+          phoneDisplay={whatsapp.display}
+        />
+      )}
 
       <dl className="grid grid-cols-1 gap-x-6 gap-y-3 rounded-xl border p-4 sm:grid-cols-2">
         {rows
