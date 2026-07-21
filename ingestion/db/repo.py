@@ -741,3 +741,31 @@ class Repo:
                 select(func.max(r.started_at)).where(r.posts_new > 0)
             ).scalar_one_or_none()
         return {"last_success_at": last_success, "last_yield_at": last_yield}
+
+    def run_stats_summary(self, hours: int = 24) -> dict:
+        """Per-status run counts + posts/upserts over the last `hours`, plus the
+        last successful run time. Powers the periodic Telegram stats digest."""
+        from datetime import timedelta
+
+        r = tables.scrape_runs.c
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                select(
+                    r.status,
+                    func.count().label("runs"),
+                    func.coalesce(func.sum(r.posts_new), 0).label("new"),
+                    func.coalesce(func.sum(r.listings_upserted), 0).label("upserted"),
+                )
+                .where(r.started_at > cutoff)
+                .group_by(r.status)
+                .order_by(func.count().desc())
+            ).mappings().all()
+            last_success = conn.execute(
+                select(func.max(r.finished_at)).where(r.status == "success")
+            ).scalar_one_or_none()
+        return {
+            "hours": hours,
+            "by_status": [dict(m) for m in rows],
+            "last_success_at": last_success,
+        }

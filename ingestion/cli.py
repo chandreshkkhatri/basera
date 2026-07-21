@@ -5,6 +5,7 @@
     python -m ingestion backfill [--results-dir scraper/results]
     python -m ingestion groups list | add <url> --city <name> | remove <url>
     python -m ingestion alerts test | flush | list [--limit N]
+    python -m ingestion stats-digest [--hours N]   # Telegram run summary (cron)
     python -m ingestion archive
     python -m ingestion watchdog
     python -m ingestion check
@@ -90,6 +91,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("check", help="validate settings, DB connectivity and schema")
+
+    digest = sub.add_parser(
+        "stats-digest",
+        help="send a Telegram summary of recent ingestion runs (run via cron)",
+    )
+    digest.add_argument("--hours", type=int, default=24,
+                        help="window to summarize (default 24)")
     return parser
 
 
@@ -414,6 +422,53 @@ def _cmd_check(settings) -> int:
     return 0
 
 
+def _cmd_stats_digest(args, settings) -> int:
+    """Compute a recent-runs summary and deliver it via Telegram (admin-facing).
+    Intended for a periodic cron; safe to run any time."""
+    from datetime import datetime, timezone
+
+    from .alerts import Alerter
+
+    repo, rc = _checked_repo(settings)
+    if repo is None:
+        return rc
+    alerter = Alerter(settings, repo)
+
+    stats = repo.run_stats_summary(args.hours)
+    icons = {"success": "✅", "login_failed": "⛔", "error": "⚠️",
+             "quota_exceeded": "⛔", "running": "…"}
+    total_new = total_up = 0
+    lines: list[str] = []
+    for row in stats["by_status"]:
+        total_new += row["new"]
+        total_up += row["upserted"]
+        seg = f"{icons.get(row['status'], '•')} {row['status']}: {row['runs']} runs"
+        if row["new"] or row["upserted"]:
+            seg += f" · {row['new']} new · {row['upserted']} upserted"
+        lines.append(seg)
+    if not lines:
+        lines.append("(no runs in window)")
+
+    last = stats["last_success_at"]
+    if last is not None:
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+        last_line = f"last success: {last:%Y-%m-%d %H:%M} UTC ({age:.1f}h ago)"
+    else:
+        last_line = "last success: never"
+
+    body = (
+        f"Last {stats['hours']}h — {total_new} new, {total_up} upserted\n"
+        + "\n".join(lines)
+        + f"\n{last_line}"
+    )
+    alerter.emit("stats_digest", body, severity="info")
+    alerter.flush_pending()
+    log.info("Stats digest:\n%s", body)
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     settings = load_settings()
@@ -440,6 +495,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_watchdog(settings)
     if args.command == "check":
         return _cmd_check(settings)
+    if args.command == "stats-digest":
+        return _cmd_stats_digest(args, settings)
     return 1
 
 

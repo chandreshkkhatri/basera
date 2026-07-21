@@ -64,7 +64,8 @@ The local Postgres is published on host port **5433** (to avoid clashing with a
 system Postgres on 5432).
 
 For production setup on Neon + Vercel, GitHub Actions migration secrets, and
-the ingestion cron/container runbook, see [DEPLOY.md](DEPLOY.md).
+the ingestion runbook (native systemd on the VM, ops + troubleshooting), see
+[docs/deploy.md](docs/deploy.md).
 
 ## Common Ingestion Workflows
 
@@ -126,7 +127,7 @@ nohup python -m ingestion.scripts.run_window --hours 12 --interval-minutes 30 --
 ```
 
 If you want a permanent schedule instead of a bounded 12-hour window, use cron
-or systemd as described in [DEPLOY.md](DEPLOY.md).
+or systemd as described in [docs/deploy.md](docs/deploy.md).
 
 ## Using Processed Data
 

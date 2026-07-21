@@ -20,7 +20,7 @@ Establish codebase structure stability, formulate mobile responsiveness strategi
   * Create `architecture.md` (System components, schemas, shared DB contract).
   * Create `development.md` (Local workspace setup, Docker, Next.js, Python CLI, common commands).
   * Create `ingestion_pipeline.md` (Decoupled capture phase, AI/LLM structured extraction, Google Maps API, retry rules).
-  * Create `deployment.md` (TLS database config, GitHub Actions workflow, Vercel deployments, production scraper scheduling).
+  * Create `deploy.md` (TLS database config, GitHub Actions workflow, Vercel deployments, production scraper scheduling).
 * **[x] Planning Docs (`BSR-091`)**:
   * Author the product `roadmap.md` and feature `backlog.md` guides.
 * **[/] Mobile Responsiveness Optimization (`BSR-108`)**:
