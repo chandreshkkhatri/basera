@@ -172,9 +172,11 @@ class RemoteBrowser:
             ["x11vnc", "-storepasswd", self.password, str(self._rfbauth)],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        # -listen restricts IPv4 to the tailnet address; -noipv6 stops x11vnc
+        # from ALSO opening an IPv6 wildcard ([::]:5900) listener.
         self._spawn([
             "x11vnc", "-display", DISPLAY, "-rfbport", str(VNC_PORT),
-            "-listen", self.ip, "-rfbauth", str(self._rfbauth),
+            "-listen", self.ip, "-noipv6", "-rfbauth", str(self._rfbauth),
             "-forever", "-shared", "-noxdamage", "-quiet",
         ])
         self._spawn([
