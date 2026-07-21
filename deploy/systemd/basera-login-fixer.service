@@ -1,0 +1,28 @@
+# Basera remote FB re-login helper — systemd *user* unit.
+#
+# Lets the admin refresh the Facebook session from a phone via Telegram
+# (/relogin), opening a headful browser on the VM exposed over the private
+# Tailscale network. See docs/deploy.md "Fix FB login from your phone".
+#
+# Prereqs on the VM (one-time):
+#   sudo apt-get install -y x11vnc websockify novnc fluxbox xvfb
+#   curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up
+#
+# Install (paths point at the prod checkout, like basera-runner):
+#   cat > ~/.config/systemd/user/basera-login-fixer.service  # (this file, edited)
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now basera-login-fixer
+#   journalctl --user -u basera-login-fixer -f
+
+[Unit]
+Description=Basera remote FB re-login helper (Telegram /relogin -> Tailscale noVNC)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/deployments/prod/basera
+ExecStart=%h/deployments/prod/basera/.venv/bin/python -m ingestion.scripts.login_fixer
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

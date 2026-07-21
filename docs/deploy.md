@@ -309,6 +309,54 @@ interception now carries most permalinks, you can disable it: set
 `FB_ACCESS_TOKEN` + `FB_GROUP_ID` in the VM `.env` and run with `--api`. Requires
 a long-lived token and appropriate group permissions.
 
+### Fix FB login from your phone (no laptop)
+
+The `basera-login-fixer` service lets you refresh the session from your phone via
+Telegram — it opens a headful browser on the VM and exposes it over your private
+**Tailscale** network (never public). When a login fails, the alert now says
+"Reply /relogin to fix it from your phone."
+
+**One-time setup (VM):**
+
+```bash
+# 1. Tailscale — the private transport (no public ports, no firewall changes)
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up          # opens an auth URL; approve to add the VM to your tailnet
+tailscale ip -4            # note the 100.x address
+
+# 2. Remote-browser tooling
+sudo apt-get install -y x11vnc websockify novnc fluxbox xvfb
+
+# 3. Install the service (paths point at the prod checkout, like the runner)
+sed "s#%h#$HOME#g" deploy/systemd/basera-login-fixer.service \
+  > ~/.config/systemd/user/basera-login-fixer.service
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+systemctl --user daemon-reload
+systemctl --user enable --now basera-login-fixer
+```
+
+Also install the **Tailscale app** on your phone and sign in to the same tailnet.
+
+**When a login fails, from your phone:**
+
+1. In the bot's Telegram chat, send **`/relogin`**. The service stops the runner,
+   opens Chromium on the FB profile, and replies with a `http://100.x:6080/vnc.html…`
+   URL + a one-time VNC password.
+2. With the Tailscale app connected, open that URL in your phone browser, log in
+   to Facebook (2FA and all).
+3. Send **`/done`**. The service verifies the session, tears the browser down, and
+   restarts the runner — replying "✅ session restored" (or telling you to retry).
+
+Other commands: `/status` (session + runner state), `/cancel` (abort + restart).
+The session also auto-closes after 15 minutes.
+
+**Security:** the browser binds only to the tailnet IP (verify with `ss -ltnp` —
+ports 5900/6080 on the `100.x` address, never `0.0.0.0`); commands are accepted
+only from `TELEGRAM_ALERT_CHAT_ID`; the VNC password is random per session; the
+browser is ephemeral; and **no Facebook credentials are stored** — you type them
+into the browser view. Logging in from the VM's own IP also tends to make the
+session last longer (the created-here/used-here IP now matches).
+
 ### Other exit codes the runner handles
 
 The continuous runner reacts to CLI exit codes: `3` quota (cools down), `4`

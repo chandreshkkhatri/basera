@@ -226,9 +226,13 @@ def run_source(
         except Exception as e:  # noqa: BLE001 — don't mask the run's own error
             log.error("Could not record run result: %s", e)
         if alerter is not None and status != "success":
+            message = f"Run {status} for {run_target}: {error}"
+            if status == "login_failed":
+                # The login-fixer service (basera-login-fixer) listens for this.
+                message += "\nReply /relogin to fix it from your phone."
             alerter.emit(
                 STATUS_TO_ALERT_CATEGORY.get(status, "run_failure"),
-                f"Run {status} for {run_target}: {error}",
+                message,
                 run_id=run_id,
                 details={"target": run_target, "stats": stats.summary()},
             )
