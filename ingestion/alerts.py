@@ -35,6 +35,7 @@ CATEGORY_SEVERITY = {
     "stale_data": "warning",
     "processing_failed": "warning",
     "db_unavailable": "critical",
+    "stats_digest": "info",
     "test": "info",
 }
 

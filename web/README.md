@@ -31,7 +31,7 @@ npm run dev
 
 `drizzle-kit` and the seed load `.env.local` automatically, so no manual
 `DATABASE_URL` export is needed. For production (Vercel + hosted Postgres,
-migrations in CI), see [DEPLOY.md](../DEPLOY.md).
+migrations in CI), see [docs/deploy.md](../docs/deploy.md).
 
 ## Cities & sourcing
 

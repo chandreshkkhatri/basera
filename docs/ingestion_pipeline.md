@@ -40,8 +40,8 @@ raw_posts table (Deduplicated on source + source_id)
 
 ### 1. Scraping and Capture
 The pipeline extracts group feed items in one of two modes:
-* **Browser Automation (Default)**: Uses Playwright to simulate Chrome, log into Facebook (if required), scroll down group pages, and parse post HTML. The raw HTML snippets or state references are stored inside `raw_posts.meta`, and the visible text is extracted.
-* **Graph API**: If `FB_ACCESS_TOKEN` and `FB_GROUP_ID` are configured in `.env`, the scraper requests feeds directly via the Graph API, bypassing browser automation.
+* **Browser Automation (Default)**: Uses Playwright to drive Chromium, log into Facebook (via a persisted profile), scroll group pages, and read each post. The post **permalink, exact timestamp, full text, and author** come primarily from **GraphQL feed interception** — a `page.on("response")` listener parses the feed's `…/graphql` payloads (`ingestion/sources/fb_graphql.py`) and correlates each story to the scraped DOM post by id or text. The DOM extraction ladder (`_post_url_aggressive`: poll anchor → hover → regex HTML → click-through) is the automatic fallback. `raw_posts.meta.url_source` records which path supplied the URL (`graphql` / `dom` / `reconstructed`); disable interception with `GRAPHQL_INTERCEPTION_ENABLED=false`. See [post_url_extraction.md](post_url_extraction.md).
+* **Graph API**: If `FB_ACCESS_TOKEN` and `FB_GROUP_ID` are configured in `.env`, the scraper requests feeds directly via the Graph API (`run --api`), bypassing browser automation.
 
 Posts are immediately saved to the `raw_posts` table. A unique constraint on `(source, source_id)` ensures duplicate items are discarded before calling external APIs.
 
@@ -91,3 +91,43 @@ LLM and Geocoding APIs may fail due to network timeouts, rate limit limits (429 
   ```
 * **Failed Status**: Once a post reaches its max attempts limit, it is excluded from future analysis cycles unless reset manually or re-scraped.
 * **Idempotency**: Running scraping runs multiple times will not duplicate processing because existing `raw_posts` entries are skipped at the database level.
+
+---
+
+## Operations (production)
+
+In production the pipeline runs continuously on the OCI VM as the systemd user
+unit `basera-runner` (`run_window --forever`, 30-min cycles: scrape → analyze →
+watchdog). Full runbook — VM setup, `.env`, updating to new code, and
+troubleshooting — is in [deploy.md](deploy.md).
+
+`systemctl --user` / `journalctl --user` over ssh need `export
+XDG_RUNTIME_DIR=/run/user/$(id -u)` first (uid `1000` for the `ubuntu` user).
+
+**Check logs**
+
+```bash
+ssh oci-us-host
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+systemctl --user status basera-runner            # is it running?
+journalctl --user -u basera-runner -f            # live tail
+journalctl --user -u basera-runner --since '-24h' --no-pager \
+  | grep -iE 'Run complete|logged in|login required'   # summaries + login events
+```
+
+**Stats (last 24h)** — one `Run complete` line per cycle carries the counters
+(`new`, `upserted`, `url_missing`, `url_from_graphql`):
+
+```bash
+ssh oci-us-host "export XDG_RUNTIME_DIR=/run/user/1000; \
+  journalctl --user -u basera-runner --since '-24h' --no-pager | grep 'Run complete'"
+```
+
+For a per-status roll-up from the `scrape_runs` table, and the last successful
+run time, use the DB query in [deploy.md § Ingestion stats](deploy.md#ingestion-stats-last-24h).
+
+**Login failure (`LOGIN_EXPIRY` alert / `Run complete [login_failed]`)** — the
+Facebook session died and the headless VM can't re-login itself; the runner backs
+off hourly until the profile is refreshed. Fix procedure (re-login on a machine
+with a display, rsync the profile, restart) is in
+[deploy.md § Fixing FB login](deploy.md#fixing-fb-login-login_expiry).

@@ -130,7 +130,13 @@ journalctl --user -u basera-runner -f
 
 Headful Chrome needs your graphical session; for unattended machines set
 `HEADLESS=true` (after logging in headfully once) and
-`loginctl enable-linger $USER`.
+`loginctl enable-linger $USER`. Over ssh, `systemctl --user` / `journalctl
+--user` need `export XDG_RUNTIME_DIR=/run/user/$(id -u)` first.
+
+> The committed unit hardcodes `~/code/basera`. On the prod VM the repo is at
+> `~/deployments/prod/basera`, so the unit is hand-written with the real paths —
+> see [docs/deploy.md](../docs/deploy.md) for the production setup, operations
+> (logs, 24h stats), and the FB login-expiry fix.
 
 ## Environment (.env)
 
@@ -148,7 +154,9 @@ FB_GROUP_ID=...                  # optional, for --api mode
 
 # Browser (optional)
 # BROWSER_CHANNEL=chrome         # set empty to use Playwright's bundled Chromium
+#                                # (required on linux-arm64 — no Chrome build exists)
 # HEADLESS=false                 # true for unattended/server runs
+# BROWSER_NO_SANDBOX=false       # true on server/container VMs (adds --no-sandbox)
 
 # Retry budget for AI-processing failures (optional)
 # PROCESSING_MAX_ATTEMPTS=3
@@ -157,10 +165,13 @@ FB_GROUP_ID=...                  # optional, for --api mode
 
 ## Deployment
 
-For running the engine in a container (Playwright + Chrome) and on a cron
-schedule against a hosted database, see [DEPLOY.md](../DEPLOY.md). A
-`Dockerfile` is provided; the browser scraper still needs a one-time interactive
-Facebook login on a machine with a display before unattended runs.
+Production runs this engine natively (venv + systemd user unit) on an OCI VM
+against Neon Postgres — see [docs/deploy.md](../docs/deploy.md) for the full
+runbook: VM bring-up, `.env`, the systemd unit, operations (log/stats commands),
+and the FB login-expiry fix. A `Dockerfile` is also provided for a containerised
+deploy. Either way the browser scraper needs a one-time interactive Facebook
+login on a machine with a display, then its `ingestion/state/profiles/` copied
+to the server.
 
 ## Database contract
 
