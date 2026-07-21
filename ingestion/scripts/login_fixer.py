@@ -151,6 +151,12 @@ class RemoteBrowser:
 
         # 2. Headful Chromium on the scraper's own profile, at the login page.
         profile = _profile_dir(self.settings)
+        # A profile rsynced from another host carries a stale SingletonLock/
+        # Cookie/Socket, which makes raw Chromium refuse to start (Playwright
+        # clears these itself; a raw launch doesn't). The runner is stopped, so
+        # we own the profile exclusively — safe to clear.
+        for lock in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            Path(profile, lock).unlink(missing_ok=True)
         chrome = _chromium_path()
         args = [
             chrome,
