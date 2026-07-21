@@ -172,16 +172,18 @@ class RemoteBrowser:
             ["x11vnc", "-storepasswd", self.password, str(self._rfbauth)],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        # -listen restricts IPv4 to the tailnet address; -noipv6 stops x11vnc
-        # from ALSO opening an IPv6 wildcard ([::]:5900) listener.
+        # VNC binds LOOPBACK ONLY (x11vnc's IPv6 handling still opened [::]:5900
+        # even with -listen/-noipv6). websockify is the sole tailnet-bound piece
+        # and bridges the tailnet IP:6080 -> 127.0.0.1:5900, so 5900 is never
+        # externally reachable.
         self._spawn([
             "x11vnc", "-display", DISPLAY, "-rfbport", str(VNC_PORT),
-            "-listen", self.ip, "-noipv6", "-rfbauth", str(self._rfbauth),
+            "-localhost", "-rfbauth", str(self._rfbauth),
             "-forever", "-shared", "-noxdamage", "-quiet",
         ])
         self._spawn([
             "websockify", "--web", NOVNC_WEB,
-            f"{self.ip}:{WEB_PORT}", f"localhost:{VNC_PORT}",
+            f"{self.ip}:{WEB_PORT}", f"127.0.0.1:{VNC_PORT}",
         ])
         log.info("Remote browser up on %s (session started).", self.url)
 
