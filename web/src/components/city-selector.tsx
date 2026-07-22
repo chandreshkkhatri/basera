@@ -3,6 +3,9 @@
 import { useEffect } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { MapPinned } from "lucide-react";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
+import { useAuth } from "@/components/auth/auth-provider";
+import { firebaseEnabled, getFirebase } from "@/lib/firebase";
 import {
   Select,
   SelectContent,
@@ -17,13 +20,17 @@ const STORAGE_KEY = "basera:city";
 /**
  * Header city picker. The selected city (slug) lives in the URL `city` param —
  * the server resolves it and scopes every listing query. We also persist the
- * choice to localStorage so a fresh visit (no param) lands on the last city.
+ * choice to localStorage and Firestore (for logged-in users) so a fresh visit
+ * (no param) lands on the user's last city across devices.
  * Changing the city keeps other filters but resets pagination.
  */
 export function CitySelector({ cities }: { cities: City[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
+
+  const cloud = firebaseEnabled && !!user;
 
   // The active city mirrors the server's resolveCity(): the URL slug if it's a
   // valid enabled city, else the first enabled city.
@@ -33,8 +40,40 @@ export function CitySelector({ cities }: { cities: City[] }) {
     cities[0]?.slug ||
     "";
 
-  // Persist the active city; on a URL with no explicit city, restore the stored
-  // one if it's still enabled and differs from the server default.
+  // Firestore subscription for logged-in users
+  useEffect(() => {
+    if (!cloud || !user) return;
+    const fb = getFirebase();
+    if (!fb) return;
+    const ref = doc(fb.db, "locations", user.uid);
+
+    const unsub = onSnapshot(ref, (snap) => {
+      const data = snap.data();
+      const remoteCity = data?.city as string | undefined;
+      const currentUrlCity = searchParams.get("city");
+
+      if (remoteCity && cities.some((c) => c.slug === remoteCity)) {
+        try {
+          localStorage.setItem(STORAGE_KEY, remoteCity);
+        } catch {
+          // ignore
+        }
+        if (!currentUrlCity) {
+          router.replace(`${pathname}?city=${remoteCity}`, { scroll: false });
+        }
+      } else if (currentUrlCity) {
+        void setDoc(
+          ref,
+          { city: currentUrlCity, updatedAt: new Date().toISOString() },
+          { merge: true },
+        ).catch(() => {});
+      }
+    });
+    return unsub;
+  }, [cloud, user, searchParams, pathname, router, cities]);
+
+  // Persist the active city; on a URL with no explicit city, restore stored
+  // city if enabled and differs from the server default.
   useEffect(() => {
     const urlCity = searchParams.get("city");
     if (urlCity) {
@@ -43,18 +82,35 @@ export function CitySelector({ cities }: { cities: City[] }) {
       } catch {
         // ignore
       }
+      if (cloud && user) {
+        const fb = getFirebase();
+        if (fb) {
+          const ref = doc(fb.db, "locations", user.uid);
+          void setDoc(
+            ref,
+            { city: urlCity, updatedAt: new Date().toISOString() },
+            { merge: true },
+          ).catch(() => {});
+        }
+      }
       return;
     }
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored && stored !== activeSlug && cities.some((c) => c.slug === stored)) {
-        router.replace(`${pathname}?city=${stored}`, { scroll: false });
+    if (!cloud) {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (
+          stored &&
+          stored !== activeSlug &&
+          cities.some((c) => c.slug === stored)
+        ) {
+          router.replace(`${pathname}?city=${stored}`, { scroll: false });
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, activeSlug]);
+  }, [searchParams, activeSlug, cloud, user]);
 
   const onChange = (slug: string) => {
     // Switching cities changes the whole result set — start filters fresh,
@@ -72,6 +128,19 @@ export function CitySelector({ cities }: { cities: City[] }) {
     } catch {
       // ignore
     }
+
+    if (cloud && user) {
+      const fb = getFirebase();
+      if (fb) {
+        const ref = doc(fb.db, "locations", user.uid);
+        void setDoc(
+          ref,
+          { city: slug, updatedAt: new Date().toISOString() },
+          { merge: true },
+        ).catch(() => {});
+      }
+    }
+
     router.push(`${pathname}?${q.toString()}`, { scroll: false });
   };
 
@@ -93,3 +162,4 @@ export function CitySelector({ cities }: { cities: City[] }) {
     </Select>
   );
 }
+
