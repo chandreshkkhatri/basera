@@ -9,19 +9,12 @@ import { PostedAgo } from "@/components/posted-ago";
 import { DistanceChip } from "@/components/distance-chip";
 import { ListingMedia } from "@/components/listing-media";
 import { SaveButton } from "@/components/saves/save-button";
-import { ContactButton } from "@/components/contact-button";
-import { ShareButton } from "@/components/share-button";
-import { SearchTerms } from "@/components/search-terms";
-import { ShortlistTracker } from "@/components/saves/shortlist-tracker";
+import { ListingCollapsibleDetails } from "@/components/listing-collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatRent, formatRentAmount } from "@/lib/format";
+import { formatRentAmount } from "@/lib/format";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
-import { postLink } from "@/lib/listing-links";
-
-function isUrl(s: string | null): boolean {
-  return !!s && /^https?:\/\//.test(s);
-}
+import { directPostLink } from "@/lib/listing-links";
 
 export function ListingCard({ listing }: { listing: ListingRow }) {
   const [expanded, setExpanded] = useState(false);
@@ -30,9 +23,7 @@ export function ListingCard({ listing }: { listing: ListingRow }) {
   const place =
     [listing.location, listing.city].filter(Boolean).join(", ") ||
     "Location unknown";
-  const link = postLink(listing);
-  const shareTitle = `${formatRent(listing.rent)}${listing.bhk ? ` · ${listing.bhk}` : ""} in ${place}`;
-  const detailUrl = `/listings/${listing.id}`;
+  const directLink = directPostLink(listing);
 
   return (
     <div className="group relative flex flex-col overflow-hidden rounded-xl border bg-card transition-all duration-150 hover:border-brand/50 hover:shadow-lg">
@@ -91,9 +82,9 @@ export function ListingCard({ listing }: { listing: ListingRow }) {
           <PostedAgo date={listing.postedAt} />
 
           <div className="flex items-center gap-1.5">
-            {link?.href && (
+            {directLink && (
               <a
-                href={link.href}
+                href={directLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
@@ -120,44 +111,13 @@ export function ListingCard({ listing }: { listing: ListingRow }) {
         </div>
 
         {expanded && (
-          <div className="mt-3 flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 text-left shadow-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
-              <ContactButton listing={listing} />
-              <ShareButton title={shareTitle} url={detailUrl} />
-            </div>
-
-            <ShortlistTracker listingId={listing.id} />
-
-            {isUrl(listing.sourceGroup) ? (
-              <p className="text-xs text-muted-foreground">
-                From group{" "}
-                <a
-                  href={listing.sourceGroup!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline underline-offset-4 font-medium text-foreground hover:text-primary"
-                >
-                  {listing.sourceGroup}
-                </a>
-              </p>
-            ) : listing.sourceGroup ? (
-              <p className="text-xs text-muted-foreground">
-                From group “{listing.sourceGroup}”
-              </p>
-            ) : null}
-
-            <SearchTerms text={listing.originalText} />
-
-            {listing.additionalDetails && (
-              <div className="text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">Extra details: </span>
-                {listing.additionalDetails}
-              </div>
-            )}
+          <div className="mt-3 pt-3 border-t">
+            <ListingCollapsibleDetails listing={listing} />
           </div>
         )}
       </div>
     </div>
   );
 }
+
 

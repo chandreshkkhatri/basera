@@ -10,10 +10,7 @@ import { DistanceChip } from "@/components/distance-chip";
 import { ListingMedia } from "@/components/listing-media";
 import { SaveButton } from "@/components/saves/save-button";
 import { EmptyState } from "@/components/empty-state";
-import { ContactButton } from "@/components/contact-button";
-import { ShareButton } from "@/components/share-button";
-import { SearchTerms } from "@/components/search-terms";
-import { ShortlistTracker } from "@/components/saves/shortlist-tracker";
+import { ListingCollapsibleDetails } from "@/components/listing-collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,13 +21,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatRent, formatRentAmount } from "@/lib/format";
+import { formatRentAmount } from "@/lib/format";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
-import { postLink } from "@/lib/listing-links";
-
-function isUrl(s: string | null): boolean {
-  return !!s && /^https?:\/\//.test(s);
-}
+import { directPostLink } from "@/lib/listing-links";
 
 /** The default feed layout: a table on desktop, compact rows on mobile. */
 export function ListingList({ listings }: { listings: ListingRow[] }) {
@@ -98,7 +91,7 @@ function ListingTableRow({ listing }: { listing: ListingRow }) {
     [listing.location, listing.city].filter(Boolean).join(", ") ||
     "Location unknown";
   const furnishing = furnishingLabel(listing.furnishingStatus);
-  const link = postLink(listing);
+  const directLink = directPostLink(listing);
 
   return (
     <>
@@ -140,9 +133,9 @@ function ListingTableRow({ listing }: { listing: ListingRow }) {
         <TableCell>
           <div className="flex flex-col gap-1 items-start">
             <SourceBadge source={listing.source} />
-            {link?.href && (
+            {directLink && (
               <a
-                href={link.href}
+                href={directLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
@@ -197,7 +190,7 @@ function ListingRow({ listing }: { listing: ListingRow }) {
   const place =
     [listing.location, listing.city].filter(Boolean).join(", ") ||
     "Location unknown";
-  const link = postLink(listing);
+  const directLink = directPostLink(listing);
 
   return (
     <div className="p-3 transition-colors hover:bg-accent/40">
@@ -254,9 +247,9 @@ function ListingRow({ listing }: { listing: ListingRow }) {
           </div>
 
           <div className="mt-1 flex items-center justify-between gap-2 pt-1 border-t">
-            {link?.href ? (
+            {directLink ? (
               <a
-                href={link.href}
+                href={directLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:underline hover:text-foreground"
@@ -294,75 +287,4 @@ function ListingRow({ listing }: { listing: ListingRow }) {
   );
 }
 
-function ListingCollapsibleDetails({ listing }: { listing: ListingRow }) {
-  const link = postLink(listing);
-  const place =
-    [listing.location, listing.city].filter(Boolean).join(", ") ||
-    "Location unknown";
-  const shareTitle = `${formatRent(listing.rent)}${listing.bhk ? ` · ${listing.bhk}` : ""} in ${place}`;
-  const detailUrl = `/listings/${listing.id}`;
-
-  return (
-    <div className="flex flex-col gap-3 rounded-lg border bg-card p-3.5 text-left shadow-xs">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
-        <ContactButton listing={listing} />
-        <div className="flex items-center gap-2">
-          <ShareButton title={shareTitle} url={detailUrl} />
-          {link?.href && (
-            <Button asChild variant="outline" size="sm">
-              <a
-                href={link.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-              >
-                Original post
-                <ExternalLink className="size-3.5 ml-1" />
-              </a>
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <ShortlistTracker listingId={listing.id} />
-
-      {isUrl(listing.sourceGroup) ? (
-        <p className="text-xs text-muted-foreground">
-          From group{" "}
-          <a
-            href={listing.sourceGroup!}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="underline underline-offset-4 font-medium text-foreground hover:text-primary"
-          >
-            {listing.sourceGroup}
-          </a>
-        </p>
-      ) : listing.sourceGroup ? (
-        <p className="text-xs text-muted-foreground">
-          From group “{listing.sourceGroup}”
-        </p>
-      ) : null}
-
-      <SearchTerms text={listing.originalText} />
-
-      {listing.additionalDetails && (
-        <div className="text-xs text-muted-foreground">
-          <span className="font-semibold text-foreground">Extra details: </span>
-          {listing.additionalDetails}
-        </div>
-      )}
-
-      <div>
-        <p className="mb-1 text-xs font-medium text-muted-foreground">
-          Original post text:
-        </p>
-        <p className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/40 p-2.5 text-xs leading-relaxed">
-          {listing.originalText}
-        </p>
-      </div>
-    </div>
-  );
-}
 
