@@ -9,14 +9,16 @@ import { Button } from "@/components/ui/button";
  * Shares the current page URL — canonical/OG metadata makes the link unfurl
  * into a rich card in WhatsApp/Telegram.
  */
-export function ShareButton({ title }: { title: string }) {
+export function ShareButton({ title, url }: { title: string; url?: string }) {
   const [copied, setCopied] = useState(false);
 
   const share = async () => {
-    const url = window.location.href;
+    const targetUrl = url
+      ? new URL(url, window.location.origin).toString()
+      : window.location.href;
     if (navigator.share) {
       try {
-        await navigator.share({ title, url });
+        await navigator.share({ title, url: targetUrl });
         return;
       } catch {
         // user dismissed the sheet — nothing to do
@@ -24,7 +26,7 @@ export function ShareButton({ title }: { title: string }) {
       }
     }
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(targetUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -36,7 +38,10 @@ export function ShareButton({ title }: { title: string }) {
     <Button
       variant="outline"
       size="sm"
-      onClick={share}
+      onClick={(e) => {
+        e.stopPropagation();
+        void share();
+      }}
       className="w-full sm:w-auto"
       data-testid="share-button"
     >
@@ -45,3 +50,4 @@ export function ShareButton({ title }: { title: string }) {
     </Button>
   );
 }
+

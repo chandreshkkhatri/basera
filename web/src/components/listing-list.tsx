@@ -1,5 +1,8 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
-import { MapPin } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, MapPin } from "lucide-react";
 import type { ListingRow } from "@/db/queries/listings";
 import { SourceBadge } from "@/components/source-badge";
 import { PostedAgo } from "@/components/posted-ago";
@@ -7,7 +10,12 @@ import { DistanceChip } from "@/components/distance-chip";
 import { ListingMedia } from "@/components/listing-media";
 import { SaveButton } from "@/components/saves/save-button";
 import { EmptyState } from "@/components/empty-state";
+import { ContactButton } from "@/components/contact-button";
+import { ShareButton } from "@/components/share-button";
+import { SearchTerms } from "@/components/search-terms";
+import { ShortlistTracker } from "@/components/saves/shortlist-tracker";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -16,8 +24,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatRentAmount } from "@/lib/format";
+import { formatRent, formatRentAmount } from "@/lib/format";
 import { furnishingLabel, genderLabel } from "@/lib/normalize";
+import { postLink } from "@/lib/listing-links";
+
+function isUrl(s: string | null): boolean {
+  return !!s && /^https?:\/\//.test(s);
+}
 
 /** The default feed layout: a table on desktop, compact rows on mobile. */
 export function ListingList({ listings }: { listings: ListingRow[] }) {
@@ -47,7 +60,7 @@ export function ListingList({ listings }: { listings: ListingRow[] }) {
                 "Distance",
                 "Posted",
                 "Source",
-                "", // save-button column
+                "Actions",
               ].map((h, i) => (
                 <TableHead
                   key={h}
@@ -79,117 +92,277 @@ function cellVisibility(index: number, base = ""): string {
 }
 
 function ListingTableRow({ listing }: { listing: ListingRow }) {
+  const [expanded, setExpanded] = useState(false);
   const rent = formatRentAmount(listing.rent);
   const place =
     [listing.location, listing.city].filter(Boolean).join(", ") ||
     "Location unknown";
   const furnishing = furnishingLabel(listing.furnishingStatus);
+  const link = postLink(listing);
 
   return (
-    <TableRow className="relative cursor-pointer">
-      <TableCell className="font-display font-semibold tabular-nums">
-        <Link
-          href={`/listings/${listing.id}`}
-          className="text-highlight after:absolute after:inset-0"
-        >
-          {rent ?? "Rent n/a"}
-        </Link>
-        {rent && (
-          <span className="ml-0.5 text-xs font-normal text-muted-foreground">
-            /mo
-          </span>
-        )}
-      </TableCell>
-      <TableCell className="max-w-60 truncate text-muted-foreground">
-        {place}
-      </TableCell>
-      <TableCell>{listing.bhk ?? "—"}</TableCell>
-      <TableCell className="hidden lg:table-cell">
-        {genderLabel(listing.genderPreference)}
-      </TableCell>
-      <TableCell className="hidden text-muted-foreground lg:table-cell">
-        {furnishing ?? "—"}
-      </TableCell>
-      <TableCell>
-        <DistanceChip
-          lat={listing.latitude}
-          lng={listing.longitude}
-          precision={listing.geoPrecision}
-          distanceKm={listing.distanceKm}
-        />
-      </TableCell>
-      <TableCell className="text-xs text-muted-foreground">
-        <PostedAgo date={listing.postedAt} />
-      </TableCell>
-      <TableCell>
-        <SourceBadge source={listing.source} />
-      </TableCell>
-      <TableCell>
-        {/* z-10 lifts the button above the row's overlay link */}
-        <SaveButton id={listing.id} className="relative z-10" />
-      </TableCell>
-    </TableRow>
-  );
-}
-
-function ListingRow({ listing }: { listing: ListingRow }) {
-  const furnishing = furnishingLabel(listing.furnishingStatus);
-  const rent = formatRentAmount(listing.rent);
-  const place =
-    [listing.location, listing.city].filter(Boolean).join(", ") ||
-    "Location unknown";
-
-  return (
-    <Link
-      href={`/listings/${listing.id}`}
-      className="group flex gap-3 p-3 transition-colors hover:bg-accent/40"
-    >
-      <div className="relative size-16 shrink-0 overflow-hidden rounded-lg">
-        <ListingMedia source={listing.source} glyphClassName="text-2xl" />
-      </div>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div className="flex items-baseline justify-between gap-2">
-          {rent ? (
-            <p className="font-display text-lg font-bold tracking-tight text-highlight tabular-nums">
-              {rent}
-              <span className="ml-0.5 text-xs font-medium text-muted-foreground">
-                /mo
-              </span>
-            </p>
-          ) : (
-            <p className="font-display text-sm font-semibold text-muted-foreground">
-              Rent not specified
-            </p>
+    <>
+      <TableRow className="relative cursor-pointer hover:bg-accent/40">
+        <TableCell className="font-display font-semibold tabular-nums">
+          <Link
+            href={`/listings/${listing.id}`}
+            className="text-highlight after:absolute after:inset-0"
+          >
+            {rent ?? "Rent n/a"}
+          </Link>
+          {rent && (
+            <span className="ml-0.5 text-xs font-normal text-muted-foreground">
+              /mo
+            </span>
           )}
-          <span className="flex shrink-0 items-center gap-1.5">
-            <SourceBadge source={listing.source} />
-            <SaveButton id={listing.id} />
-          </span>
-        </div>
-
-        <p className="flex items-center gap-1 text-sm text-muted-foreground">
-          <MapPin className="size-3.5 shrink-0" />
-          <span className="truncate">{place}</span>
-        </p>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {listing.bhk && <Badge variant="secondary">{listing.bhk}</Badge>}
-          <Badge variant="secondary">
-            {genderLabel(listing.genderPreference)}
-          </Badge>
-          {furnishing && <Badge variant="secondary">{furnishing}</Badge>}
+        </TableCell>
+        <TableCell className="max-w-60 truncate text-muted-foreground">
+          {place}
+        </TableCell>
+        <TableCell>{listing.bhk ?? "—"}</TableCell>
+        <TableCell className="hidden lg:table-cell">
+          {genderLabel(listing.genderPreference)}
+        </TableCell>
+        <TableCell className="hidden text-muted-foreground lg:table-cell">
+          {furnishing ?? "—"}
+        </TableCell>
+        <TableCell>
           <DistanceChip
             lat={listing.latitude}
             lng={listing.longitude}
             precision={listing.geoPrecision}
             distanceKm={listing.distanceKm}
           />
-          <span className="ml-auto text-xs text-muted-foreground">
-            <PostedAgo date={listing.postedAt} />
-          </span>
-        </div>
-      </div>
-    </Link>
+        </TableCell>
+        <TableCell className="text-xs text-muted-foreground">
+          <PostedAgo date={listing.postedAt} />
+        </TableCell>
+        <TableCell>
+          <div className="flex flex-col gap-1 items-start">
+            <SourceBadge source={listing.source} />
+            {link?.href && (
+              <a
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="relative z-10 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:underline hover:text-foreground"
+              >
+                Original post
+                <ExternalLink className="size-3 shrink-0" />
+              </a>
+            )}
+          </div>
+        </TableCell>
+        <TableCell>
+          {/* z-10 lifts interactive elements above the row's overlay link */}
+          <div className="relative z-10 flex items-center gap-1.5 justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded((v) => !v);
+              }}
+              title={expanded ? "Hide details" : "More details"}
+              className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Details
+              {expanded ? (
+                <ChevronUp className="size-3.5 ml-0.5" />
+              ) : (
+                <ChevronDown className="size-3.5 ml-0.5" />
+              )}
+            </Button>
+            <SaveButton id={listing.id} />
+          </div>
+        </TableCell>
+      </TableRow>
+
+      {expanded && (
+        <TableRow className="bg-muted/10 hover:bg-muted/10">
+          <TableCell colSpan={9} className="p-4">
+            <ListingCollapsibleDetails listing={listing} />
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }
+
+function ListingRow({ listing }: { listing: ListingRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const furnishing = furnishingLabel(listing.furnishingStatus);
+  const rent = formatRentAmount(listing.rent);
+  const place =
+    [listing.location, listing.city].filter(Boolean).join(", ") ||
+    "Location unknown";
+  const link = postLink(listing);
+
+  return (
+    <div className="p-3 transition-colors hover:bg-accent/40">
+      <div className="flex gap-3">
+        <Link
+          href={`/listings/${listing.id}`}
+          className="relative size-16 shrink-0 overflow-hidden rounded-lg"
+        >
+          <ListingMedia source={listing.source} glyphClassName="text-2xl" />
+        </Link>
+
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <Link href={`/listings/${listing.id}`}>
+              {rent ? (
+                <p className="font-display text-lg font-bold tracking-tight text-highlight tabular-nums">
+                  {rent}
+                  <span className="ml-0.5 text-xs font-medium text-muted-foreground">
+                    /mo
+                  </span>
+                </p>
+              ) : (
+                <p className="font-display text-sm font-semibold text-muted-foreground">
+                  Rent not specified
+                </p>
+              )}
+            </Link>
+            <span className="flex shrink-0 items-center gap-1.5">
+              <SourceBadge source={listing.source} />
+              <SaveButton id={listing.id} />
+            </span>
+          </div>
+
+          <p className="flex items-center gap-1 text-sm text-muted-foreground">
+            <MapPin className="size-3.5 shrink-0" />
+            <span className="truncate">{place}</span>
+          </p>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {listing.bhk && <Badge variant="secondary">{listing.bhk}</Badge>}
+            <Badge variant="secondary">
+              {genderLabel(listing.genderPreference)}
+            </Badge>
+            {furnishing && <Badge variant="secondary">{furnishing}</Badge>}
+            <DistanceChip
+              lat={listing.latitude}
+              lng={listing.longitude}
+              precision={listing.geoPrecision}
+              distanceKm={listing.distanceKm}
+            />
+            <span className="ml-auto text-xs text-muted-foreground">
+              <PostedAgo date={listing.postedAt} />
+            </span>
+          </div>
+
+          <div className="mt-1 flex items-center justify-between gap-2 pt-1 border-t">
+            {link?.href ? (
+              <a
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:underline hover:text-foreground"
+              >
+                Original post
+                <ExternalLink className="size-3 shrink-0" />
+              </a>
+            ) : (
+              <span />
+            )}
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setExpanded((v) => !v)}
+              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+            >
+              {expanded ? "Hide details" : "More details"}
+              {expanded ? (
+                <ChevronUp className="size-3.5 ml-0.5" />
+              ) : (
+                <ChevronDown className="size-3.5 ml-0.5" />
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 pt-3 border-t">
+          <ListingCollapsibleDetails listing={listing} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ListingCollapsibleDetails({ listing }: { listing: ListingRow }) {
+  const link = postLink(listing);
+  const place =
+    [listing.location, listing.city].filter(Boolean).join(", ") ||
+    "Location unknown";
+  const shareTitle = `${formatRent(listing.rent)}${listing.bhk ? ` · ${listing.bhk}` : ""} in ${place}`;
+  const detailUrl = `/listings/${listing.id}`;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border bg-card p-3.5 text-left shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+        <ContactButton listing={listing} />
+        <div className="flex items-center gap-2">
+          <ShareButton title={shareTitle} url={detailUrl} />
+          {link?.href && (
+            <Button asChild variant="outline" size="sm">
+              <a
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Original post
+                <ExternalLink className="size-3.5 ml-1" />
+              </a>
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <ShortlistTracker listingId={listing.id} />
+
+      {isUrl(listing.sourceGroup) ? (
+        <p className="text-xs text-muted-foreground">
+          From group{" "}
+          <a
+            href={listing.sourceGroup!}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="underline underline-offset-4 font-medium text-foreground hover:text-primary"
+          >
+            {listing.sourceGroup}
+          </a>
+        </p>
+      ) : listing.sourceGroup ? (
+        <p className="text-xs text-muted-foreground">
+          From group “{listing.sourceGroup}”
+        </p>
+      ) : null}
+
+      <SearchTerms text={listing.originalText} />
+
+      {listing.additionalDetails && (
+        <div className="text-xs text-muted-foreground">
+          <span className="font-semibold text-foreground">Extra details: </span>
+          {listing.additionalDetails}
+        </div>
+      )}
+
+      <div>
+        <p className="mb-1 text-xs font-medium text-muted-foreground">
+          Original post text:
+        </p>
+        <p className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/40 p-2.5 text-xs leading-relaxed">
+          {listing.originalText}
+        </p>
+      </div>
+    </div>
+  );
+}
+
